@@ -2,6 +2,13 @@ import os
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(REPO_ROOT / ".env")
+except ImportError:
+    pass
 DEFAULT_CSV = REPO_ROOT / "dataset" / "DisneylandReviews.csv"
 CHROMA_DIR = REPO_ROOT / ".chroma"
 HF_CACHE = REPO_ROOT / ".hf_cache"
