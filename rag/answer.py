@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from textwrap import dedent
 
+from rag.config import OPENAI_MODEL_DEFAULT
 from rag.filters import QueryFilters
 
 
@@ -63,7 +64,7 @@ def _answer_openai(question: str, context: str, relax_note: str) -> str:
         user += f"Note (retrieval):\n{relax_note}\n\n"
     user += f"Retrieved reviews:\n{context}"
     resp = client.chat.completions.create(
-        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        model=os.environ.get("OPENAI_MODEL", OPENAI_MODEL_DEFAULT),
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},

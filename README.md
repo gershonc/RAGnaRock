@@ -49,7 +49,7 @@ flowchart TB
         RET["retrieve.py\nmetadata filter + semantic search"]
         RELAX["Filter relaxation\nif zero hits"]
         ANS["answer.py"]
-        OAI["OpenAI API\ngpt-4o-mini"]
+        OAI["OpenAI API\ngpt-5.5"]
         FALL["Extractive fallback\nsnippets + metadata"]
     end
 
@@ -189,7 +189,7 @@ Create `.env` (already gitignored):
 ```bash
 OPENAI_API_KEY=sk-...
 # optional:
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-5.5
 ```
 
 `rag/config.py` loads this via `python-dotenv` on startup.

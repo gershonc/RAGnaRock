@@ -19,3 +19,5 @@ for _k in ("HF_HOME", "TRANSFORMERS_CACHE", "HUGGINGFACE_HUB_CACHE"):
 COLLECTION_NAME = "disneyland_reviews"
 # Sentence-Transformers model id (downloads on first ingest)
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+# OpenAI chat model for grounded answers (override with OPENAI_MODEL in .env)
+OPENAI_MODEL_DEFAULT = "gpt-5.5"
