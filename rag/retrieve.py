@@ -32,6 +32,12 @@ def _relax_filters(f: QueryFilters) -> list[QueryFilters]:
         nxt.relaxations = list(cur.relaxations) + ["Dropped month/season filter (no hits)."]
         chain.append(nxt)
         cur = nxt
+    if f.years:
+        nxt = deepcopy(cur)
+        nxt.years = None
+        nxt.relaxations = list(cur.relaxations) + ["Dropped year filter (no hits)."]
+        chain.append(nxt)
+        cur = nxt
     if f.branch:
         nxt = deepcopy(cur)
         nxt.branch = None

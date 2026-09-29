@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from rag.metadata import MONTH_NAME_TO_NUM, SEASON_TO_MONTHS
+from rag.metadata import MONTH_ABBR_TO_NUM, MONTH_NAME_TO_NUM, season_to_months
 
 
 # Dataset `Branch` values
@@ -94,9 +94,13 @@ def _normalize_location_candidate(raw: str) -> str:
 
 
 def infer_branch(q: str) -> str | None:
+    # Fix 5a: word-boundary regex so "paris" doesn't fire inside
+    # "comparison", "hk" doesn't fire inside "shaky", etc.
+    # Longest aliases first so specific names beat generic ones.
     s = _norm(q)
-    for alias, branch in BRANCH_ALIASES:
-        if alias in s:
+    for alias, branch in sorted(BRANCH_ALIASES, key=lambda x: len(x[0]), reverse=True):
+        pattern = r"\b" + re.escape(alias.strip()) + r"\b"
+        if re.search(pattern, s):
             return branch
     return None
 
@@ -121,11 +125,28 @@ def infer_reviewer_location(q: str) -> str | None:
     return None
 
 
-def infer_months(q: str) -> list[int] | None:
-    s = q.lower()
+def infer_months(q: str, branch: str | None = None) -> list[int] | None:
+    # Fix 1: word-boundary matching so "may" in "maybe" or "may be"
+    # doesn't trigger May, "mar" in "smart" doesn't trigger March, etc.
+    # Fix 4: season -> months is park-aware (HK summer includes Sep).
     months: set[int] = set()
+    lowered = q.lower()
     for name, num in MONTH_NAME_TO_NUM.items():
-        if name in s:
+        if name == "may":
+            # "may" is also a modal verb: only accept capitalised "May"
+            # or an explicit month context ("in may", "during may", ...).
+            if re.search(r"\bMay\b", q):
+                months.add(num)
+            elif re.search(r"\b(in|for|during|visit(?:ed|ing)?|month of)\s+may\b", lowered):
+                months.add(num)
+            continue
+        if re.search(r"\b" + re.escape(name) + r"\b", lowered):
+            months.add(num)
+    for abbr, num in MONTH_ABBR_TO_NUM.items():
+        # Word boundaries already prevent inside-word hits ("mar" in
+        # "smart" won't match). Abbreviations are matched
+        # case-insensitively: "Jan", "jan", "Sept." all count.
+        if re.search(r"\b" + re.escape(abbr) + r"\b\.?", lowered):
             months.add(num)
     for season, keys in (
         ("spring", ("spring",)),
@@ -133,22 +154,37 @@ def infer_months(q: str) -> list[int] | None:
         ("winter", ("winter",)),
         ("autumn", ("autumn", "fall")),
     ):
-        if any(k in s for k in keys):
-            months.update(SEASON_TO_MONTHS[season])
+        if any(re.search(r"\b" + re.escape(k) + r"\b", lowered) for k in keys):
+            months.update(season_to_months(season, branch))
     if months:
         return sorted(months)
+    return None
+
+
+def infer_years(q: str) -> list[int] | None:
+    # Fix 5b: QueryFilters.years was never populated. Extract 4-digit
+    # years in the dataset's plausible range (1990-2030). Catches single
+    # years ("in 2015") and ranges ("2015-2017" -> [2015, 2017]).
+    found: set[int] = set()
+    for m in re.finditer(r"\b(19\d{2}|20\d{2})\b", q):
+        y = int(m.group(1))
+        if 1990 <= y <= 2030:
+            found.add(y)
+    if found:
+        return sorted(found)
     return None
 
 
 def interpret_query(question: str) -> QueryFilters:
     branch = infer_branch(question)
     reviewer_location = infer_reviewer_location(question)
-    months = infer_months(question)
+    months = infer_months(question, branch=branch)
+    years = infer_years(question)
     return QueryFilters(
         branch=branch,
         reviewer_location=reviewer_location,
         months=months,
-        years=None,
+        years=years,
     )
 
 

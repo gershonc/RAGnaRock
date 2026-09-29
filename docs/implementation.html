@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAGnaRock — Implementation Details</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171b22; --line:#2a3140; --txt:#e8ecf3; --muted:#9aa4b5; --acc:#7cc4ff; --ok:#7dffa8; --warn:#ffd67c; --vio:#c9a7ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:15px/1.65 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { max-width:1040px; margin:0 auto; padding:32px 20px 90px; }
+  header.hero { background:linear-gradient(135deg,#1b2740,#12202e); border:1px solid var(--line); border-radius:14px; padding:28px; margin-bottom:24px; }
+  header.hero h1 { margin:0 0 6px; font-size:30px; }
+  header.hero p { margin:6px 0; color:var(--muted); }
+  .badge { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 10px; font-size:12px; color:var(--acc); margin:0 6px 6px 0; }
+  nav.toc, section.card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:22px 24px; margin:16px 0; }
+  nav.toc h2, section.card h2 { margin-top:0; font-size:21px; }
+  nav.toc ol { margin:8px 0; padding-left:22px; color:var(--muted); columns:2; }
+  @media (max-width:760px){ nav.toc ol{columns:1;} }
+  nav.toc a { color:var(--acc); text-decoration:none; }
+  nav.toc a:hover { text-decoration:underline; }
+  h3 { color:var(--acc); margin:22px 0 6px; font-size:16px; }
+  h4 { color:var(--vio); margin:16px 0 4px; font-size:14px; }
+  p, li { color:var(--txt); }
+  .muted { color:var(--muted); }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  code.inline { background:#0c0f14; border:1px solid var(--line); border-radius:6px; padding:1px 6px; font-size:13px; white-space:nowrap; }
+  pre { background:#0c0f14; border:1px solid var(--line); border-radius:10px; padding:14px 16px; overflow:auto; font-size:12.8px; line-height:1.55; }
+  table { width:100%; border-collapse:collapse; margin:10px 0; font-size:13.5px; }
+  th, td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#0c0f14; color:var(--acc); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:760px){ .grid2{grid-template-columns:1fr;} }
+  .fix { border-left:4px solid var(--acc); padding:10px 14px; background:#0c0f14; border-radius:0 10px 10px 0; margin:12px 0; }
+  .fix h4 { margin:0 0 6px; color:var(--txt); }
+  .pill-ok { color:var(--ok); }
+  figure.diagram { margin:14px 0 6px; background:#0c0f14; border:1px solid var(--line); border-radius:10px; padding:14px 10px 6px; }
+  figure.diagram svg { width:100%; height:auto; display:block; }
+  figure.diagram figcaption { color:var(--muted); font-size:12.5px; padding:8px 8px 10px; }
+  figure.diagram figcaption b { color:var(--txt); }
+  svg text { font-family:-apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  footer { color:var(--muted); font-size:13px; margin-top:24px; }
+  .klist { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+  .klist span { border:1px solid var(--line); border-radius:6px; padding:2px 8px; font-size:12px; background:#0c0f14; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>RAGnaRock — Implementation Details</h1>
+  <p>Retrieval-Augmented Generation over Disneyland reviews (review text + structured metadata).</p>
+  <div>
+    <span class="badge">42,656 reviews</span>
+    <span class="badge">Chroma + MiniLM-L6-v2</span>
+    <span class="badge">gpt-4o-mini (optional)</span>
+    <span class="badge">Python CLI</span>
+    <span class="badge">v2 · with diagrams</span>
+  </div>
+  <p>Generated 2026-09-29 from working tree. Dataset file <code class="inline">dataset/DisneylandReviews.csv</code> is intentionally committed (31&nbsp;MB). Doc file: <code class="inline">docs/implementation.html</code> (self-contained, no external assets).</p>
+</header>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#purpose">Purpose &amp; example questions</a></li>
+    <li><a href="#dataset">Dataset in detail</a></li>
+    <li><a href="#arch">System architecture (diagram)</a></li>
+    <li><a href="#ingest">Ingest pipeline (diagram)</a></li>
+    <li><a href="#askpath">Ask pipeline &amp; sequence chart (diagrams)</a></li>
+    <li><a href="#modules">Module reference</a></li>
+    <li><a href="#storage">Storage, embeddings &amp; document schema (diagram)</a></li>
+    <li><a href="#filters">Filter inference, incl. seasons (diagrams)</a></li>
+    <li><a href="#retrieval">Retrieval &amp; relaxation (diagram)</a></li>
+    <li><a href="#answer">Answer generation &amp; context budget (diagram)</a></li>
+    <li><a href="#traces">Worked end-to-end traces</a></li>
+    <li><a href="#config">Config &amp; CLI</a></li>
+    <li><a href="#fixes">Fixes 1–5 (applied)</a></li>
+    <li><a href="#git">Git / committing the data</a></li>
+    <li><a href="#eval">Evaluation &amp; troubleshooting</a></li>
+  </ol>
+</nav>
+
+<!-- ================= 1 ================= -->
+<section class="card" id="purpose">
+  <h2>1. Purpose &amp; example questions</h2>
+  <p>The customer-experience team asks open-ended questions answered <em>only</em> from retrieved reviews plus their metadata (park, visitor country, visit date, rating). The system deliberately couples <strong>metadata filtering</strong> (exact, auditable) with <strong>dense retrieval</strong> (semantic, fuzzy) so questions that mix “who / where / when” with “what did they feel” work in one call.</p>
+  <ul>
+    <li>What do visitors from Australia say about Disneyland in Hong Kong?</li>
+    <li>Is spring a good time to visit Disneyland?</li>
+    <li>Is Disneyland California usually crowded in June?</li>
+    <li>Is the staff in Paris friendly?</li>
+    <li>How did ratings for Hong Kong trend in 2015–2017? (uses the <code class="inline">years</code> filter)</li>
+  </ul>
+  <p>Without <code class="inline">OPENAI_API_KEY</code>, <code class="inline">ask</code> returns extractive snippets (no synthesis). With a key it returns a grounded summary with Review-ID citations.</p>
+</section>
+
+<!-- ================= 2 ================= -->
+<section class="card" id="dataset">
+  <h2>2. Dataset in detail</h2>
+  <p>File: <code class="inline">dataset/DisneylandReviews.csv</code> — 42,656 data rows (+ header), ~31&nbsp;MB, UTF-8, read with <code class="inline">errors="replace"</code>.</p>
+  <table>
+    <tr><th>Column</th><th>Type / example</th><th>Handling</th></tr>
+    <tr><td><code class="inline">Review_ID</code></td><td>string, e.g. <code class="inline">670772142</code></td><td>Duplicates exist → Chroma id is <code class="inline">{review_id}-{row_index}</code>, so nothing is overwritten.</td></tr>
+    <tr><td><code class="inline">Rating</code></td><td>1–5</td><td><code class="inline">int(float(...))</code>; unparseable → <code class="inline">0</code> (row still indexed).</td></tr>
+    <tr><td><code class="inline">Year_Month</code></td><td><code class="inline">2019-4</code> or <code class="inline">missing</code> (2,613 rows)</td><td>Malformed → <code class="inline">year=0, month=0, season=unknown</code>; raw string kept in <code class="inline">year_month</code>.</td></tr>
+    <tr><td><code class="inline">Reviewer_Location</code></td><td>162 distinct values</td><td>Inference allowlist covers the top ~42; rare countries fall through to “no location filter”.</td></tr>
+    <tr><td><code class="inline">Review_Text</code></td><td>free text, 0 empty rows in dump</td><td>Empty rows are skipped at ingest and counted.</td></tr>
+    <tr><td><code class="inline">Branch</code></td><td>3 values</td><td>See distribution below; alias-matched at query time.</td></tr>
+  </table>
+  <div class="grid2">
+    <div>
+      <h3>Branch distribution</h3>
+      <table><tr><th>Branch</th><th>Count</th><th>Share</th></tr>
+      <tr><td>Disneyland_California</td><td>19,406</td><td>45.5%</td></tr>
+      <tr><td>Disneyland_Paris</td><td>13,630</td><td>32.0%</td></tr>
+      <tr><td>Disneyland_HongKong</td><td>9,620</td><td>22.5%</td></tr></table>
+    </div>
+    <div>
+      <h3>Rating distribution (skewed positive)</h3>
+      <table><tr><th>Rating</th><th>Count</th><th>Share</th></tr>
+      <tr><td>5</td><td>23,146</td><td>54.3%</td></tr>
+      <tr><td>4</td><td>10,775</td><td>25.3%</td></tr>
+      <tr><td>3</td><td>5,109</td><td>12.0%</td></tr>
+      <tr><td>2</td><td>2,127</td><td>5.0%</td></tr>
+      <tr><td>1</td><td>1,499</td><td>3.5%</td></tr></table>
+      <p class="muted">Consequence: “is X bad?” questions retrieve mostly from a small negative pool — the LLM prompt is told to say when evidence is thin.</p>
+    </div>
+  </div>
+  <div class="grid2">
+    <div>
+      <h3>Year distribution</h3>
+      <table><tr><th>Year</th><th>Count</th></tr>
+      <tr><td>2010</td><td>143</td></tr><tr><td>2011</td><td>1,984</td></tr>
+      <tr><td>2012</td><td>4,342</td></tr><tr><td>2013</td><td>4,717</td></tr>
+      <tr><td>2014</td><td>5,301</td></tr><tr><td>2015</td><td>6,979</td></tr>
+      <tr><td>2016</td><td>6,599</td></tr><tr><td>2017</td><td>5,195</td></tr>
+      <tr><td>2018</td><td>3,997</td></tr><tr><td>2019</td><td>786</td></tr>
+      <tr><td>missing</td><td>2,613</td></tr></table>
+    </div>
+    <div>
+      <h3>Top reviewer locations</h3>
+      <table><tr><th>Location</th><th>Count</th></tr>
+      <tr><td>United States</td><td>14,551</td></tr>
+      <tr><td>United Kingdom</td><td>9,751</td></tr>
+      <tr><td>Australia</td><td>4,679</td></tr>
+      <tr><td>Canada</td><td>2,235</td></tr>
+      <tr><td>India</td><td>1,511</td></tr>
+      <tr><td>Philippines</td><td>1,070</td></tr>
+      <tr><td>Singapore</td><td>1,037</td></tr></table>
+      <h3>Visit-month distribution (raw)</h3>
+      <table><tr><th>M</th><td>1</td><td>2</td><td>3</td><td>4</td><td>5</td><td>6</td><td>7</td><td>8</td><td>9</td><td>10</td><td>11</td><td>12</td></tr>
+      <tr><th>Count</th><td>2516</td><td>2459</td><td>3134</td><td>3478</td><td>3439</td><td>3590</td><td>3880</td><td>3994</td><td>3230</td><td>3764</td><td>2685</td><td>3874</td></tr></table>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 3 ================= -->
+<section class="card" id="arch">
+  <h2>3. System architecture</h2>
+  <p>Two phases share the Chroma collection. <strong>Offline</strong> builds it once; <strong>online</strong> filters + searches it per question. <code class="inline">rag/config.py</code> + <code class="inline">.env</code> supply paths and the optional OpenAI key.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 980 372" role="img" aria-label="High-level system architecture">
+      <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9aa4b5"/></marker></defs>
+      <rect x="10" y="10" width="220" height="312" rx="10" fill="none" stroke="#2a3140"/>
+      <text x="120" y="34" text-anchor="middle" fill="#7cc4ff" font-size="13" font-weight="bold">User / CX team</text>
+      <rect x="26" y="48" width="188" height="62" rx="8" fill="#12202e" stroke="#2a3140"/>
+      <text x="120" y="72" text-anchor="middle" fill="#e8ecf3" font-size="12">Natural-language</text><text x="120" y="89" text-anchor="middle" fill="#e8ecf3" font-size="12">question</text>
+      <line x1="120" y1="112" x2="120" y2="128" stroke="#9aa4b5" marker-end="url(#a1)"/>
+      <rect x="26" y="130" width="188" height="62" rx="8" fill="#12202e" stroke="#2a3140"/>
+      <text x="120" y="154" text-anchor="middle" fill="#e8ecf3" font-size="12">python -m rag.cli</text><text x="120" y="171" text-anchor="middle" fill="#9aa4b5" font-size="11">ask / show-filters</text>
+      <rect x="26" y="206" width="188" height="100" rx="8" fill="#0c0f14" stroke="#2a3140"/>
+      <text x="120" y="228" text-anchor="middle" fill="#9aa4b5" font-size="11">prints inferred filters,</text><text x="120" y="245" text-anchor="middle" fill="#9aa4b5" font-size="11">relaxation notes,</text><text x="120" y="262" text-anchor="middle" fill="#9aa4b5" font-size="11">retrieved count,</text><text x="120" y="279" text-anchor="middle" fill="#9aa4b5" font-size="11">then the answer</text>
+
+      <rect x="250" y="10" width="330" height="312" rx="10" fill="none" stroke="#2a3140"/>
+      <text x="415" y="34" text-anchor="middle" fill="#7cc4ff" font-size="13" font-weight="bold">Offline setup (once)</text>
+      <rect x="266" y="48" width="298" height="40" rx="8" fill="#12202e" stroke="#2a3140"/><text x="415" y="73" text-anchor="middle" fill="#e8ecf3" font-size="12">DisneylandReviews.csv · ~42.6k rows</text>
+      <rect x="266" y="96" width="298" height="40" rx="8" fill="#12202e" stroke="#2a3140"/><text x="415" y="121" text-anchor="middle" fill="#e8ecf3" font-size="12">rag ingest · metadata.py</text>
+      <rect x="266" y="144" width="298" height="40" rx="8" fill="#12202e" stroke="#2a3140"/><text x="415" y="169" text-anchor="middle" fill="#e8ecf3" font-size="12">embeddings.py · MiniLM-L6-v2</text>
+      <rect x="266" y="192" width="143" height="56" rx="8" fill="#0c0f14" stroke="#7dffa8"/><text x="337" y="214" text-anchor="middle" fill="#7dffa8" font-size="12">.chroma/</text><text x="337" y="231" text-anchor="middle" fill="#9aa4b5" font-size="11">vector DB</text>
+      <rect x="421" y="192" width="143" height="56" rx="8" fill="#0c0f14" stroke="#2a3140"/><text x="492" y="214" text-anchor="middle" fill="#e8ecf3" font-size="12">.hf_cache/</text><text x="492" y="231" text-anchor="middle" fill="#9aa4b5" font-size="11">model cache</text>
+      <rect x="266" y="258" width="298" height="48" rx="8" fill="#0c0f14" stroke="#2a3140"/><text x="415" y="278" text-anchor="middle" fill="#9aa4b5" font-size="11">batch 256 · cosine HNSW</text><text x="415" y="294" text-anchor="middle" fill="#9aa4b5" font-size="11">takes a few minutes</text>
+      <line x1="415" y1="88" x2="415" y2="94" stroke="#9aa4b5" marker-end="url(#a1)"/><line x1="415" y1="136" x2="415" y2="142" stroke="#9aa4b5" marker-end="url(#a1)"/><line x1="415" y1="184" x2="415" y2="190" stroke="#9aa4b5" marker-end="url(#a1)"/>
+
+      <rect x="600" y="10" width="370" height="312" rx="10" fill="none" stroke="#2a3140"/>
+      <text x="785" y="34" text-anchor="middle" fill="#7cc4ff" font-size="13" font-weight="bold">Online query path (ask)</text>
+      <rect x="616" y="48" width="338" height="40" rx="8" fill="#12202e" stroke="#2a3140"/><text x="785" y="73" text-anchor="middle" fill="#e8ecf3" font-size="12">filters.py · NL → branch / country / months / years</text>
+      <rect x="616" y="96" width="338" height="40" rx="8" fill="#12202e" stroke="#2a3140"/><text x="785" y="121" text-anchor="middle" fill="#e8ecf3" font-size="12">retrieve.py · where + semantic search + relax</text>
+      <rect x="616" y="144" width="338" height="40" rx="8" fill="#12202e" stroke="#2a3140"/><text x="785" y="169" text-anchor="middle" fill="#e8ecf3" font-size="12">answer.py · context assembly (12k chars)</text>
+      <rect x="616" y="192" width="163" height="56" rx="8" fill="#0c0f14" stroke="#7cc4ff"/><text x="697" y="214" text-anchor="middle" fill="#7cc4ff" font-size="12">OpenAI API</text><text x="697" y="231" text-anchor="middle" fill="#9aa4b5" font-size="11">key set → summary</text>
+      <rect x="791" y="192" width="163" height="56" rx="8" fill="#0c0f14" stroke="#2a3140"/><text x="872" y="214" text-anchor="middle" fill="#e8ecf3" font-size="12">Extractive</text><text x="872" y="231" text-anchor="middle" fill="#9aa4b5" font-size="11">no key → snippets</text>
+      <rect x="616" y="258" width="338" height="48" rx="8" fill="#0c0f14" stroke="#2a3140"/><text x="785" y="278" text-anchor="middle" fill="#9aa4b5" font-size="11">config.py + .env supply OPENAI_API_KEY,</text><text x="785" y="294" text-anchor="middle" fill="#9aa4b5" font-size="11">OPENAI_MODEL, paths, HF cache env</text>
+
+      <line x1="230" y1="161" x2="612" y2="68" stroke="#7cc4ff" stroke-dasharray="5 4" marker-end="url(#a1)"/>
+      <text x="421" y="100" text-anchor="middle" fill="#7cc4ff" font-size="11">ask: question + k</text>
+      <line x1="700" y1="116" x2="480" y2="200" stroke="#9aa4b5" stroke-dasharray="5 4" marker-end="url(#a1)"/>
+      <text x="560" y="150" text-anchor="middle" fill="#9aa4b5" font-size="11">query + where → top-k</text>
+    </svg>
+    <figcaption><b>Figure 1 — High-level architecture.</b> Offline ingest (middle) writes vectors + metadata to <code class="inline">.chroma/</code>. Online ask (right) derives metadata filters from the question, searches the same collection, relaxes on zero hits, then generates an answer. Dashed lines are cross-phase calls.</figcaption>
+  </figure>
+  <table>
+    <tr><th>Layer</th><th>Role</th><th>Lives in</th></tr>
+    <tr><td>Metadata filters</td><td>Narrow by <code class="inline">branch</code>, <code class="inline">reviewer_location</code>, <code class="inline">month</code>, <code class="inline">year</code></td><td><code class="inline">rag/filters.py</code></td></tr>
+    <tr><td>Dense retrieval</td><td>Semantic match on review text (crowding, staff, weather, rides…)</td><td><code class="inline">rag/retrieve.py</code> + Chroma</td></tr>
+    <tr><td>Document prefix</td><td>Metadata embedded into each chunk so similarity aligns with structured fields</td><td><code class="inline">rag/ingest.py</code></td></tr>
+    <tr><td>Relaxation</td><td>Drop constraints stepwise so sparse combos still return evidence (noted in output)</td><td><code class="inline">rag/retrieve.py: _relax_filters</code></td></tr>
+    <tr><td>Generation</td><td>LLM summarizes retrieved reviews only, cites Review IDs; fallback lists snippets</td><td><code class="inline">rag/answer.py</code></td></tr>
+  </table>
+</section>
+
+<!-- ================= 4 ================= -->
+<section class="card" id="ingest">
+  <h2>4. Ingest pipeline</h2>
+  <p><code class="inline">ingest_csv(csv_path, reset=False, batch_size=256)</code> streams the CSV (a line-count pre-pass exists only to size the progress bar), converts each row, and flushes to Chroma every 256 docs. One bad row can never abort the run: rating/date parse failures get safe defaults and are counted.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 980 168" role="img" aria-label="Ingest pipeline flowchart">
+      <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9aa4b5"/></marker></defs>
+      <rect x="8" y="30" width="140" height="96" rx="8" fill="#12202e" stroke="#2a3140"/><text x="78" y="62" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">CSV row</text><text x="78" y="80" text-anchor="middle" fill="#9aa4b5" font-size="11">DictReader,</text><text x="78" y="96" text-anchor="middle" fill="#9aa4b5" font-size="11">streamed</text><text x="78" y="112" text-anchor="middle" fill="#9aa4b5" font-size="11">idx = row no.</text>
+      <rect x="174" y="30" width="140" height="96" rx="8" fill="#12202e" stroke="#2a3140"/><text x="244" y="62" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">Parse fields</text><text x="244" y="80" text-anchor="middle" fill="#9aa4b5" font-size="11">Review_ID, Rating,</text><text x="244" y="96" text-anchor="middle" fill="#9aa4b5" font-size="11">Year_Month, Loc,</text><text x="244" y="112" text-anchor="middle" fill="#9aa4b5" font-size="11">Text, Branch</text>
+      <rect x="340" y="30" width="140" height="96" rx="8" fill="#12202e" stroke="#2a3140"/><text x="410" y="62" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">Derive metadata</text><text x="410" y="80" text-anchor="middle" fill="#9aa4b5" font-size="11">year, month via</text><text x="410" y="96" text-anchor="middle" fill="#9aa4b5" font-size="11">parse_year_month;</text><text x="410" y="112" text-anchor="middle" fill="#9aa4b5" font-size="11">season(branch)</text>
+      <rect x="506" y="30" width="140" height="96" rx="8" fill="#12202e" stroke="#2a3140"/><text x="576" y="62" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">Build document</text><text x="576" y="80" text-anchor="middle" fill="#9aa4b5" font-size="11">1-line prefix +</text><text x="576" y="96" text-anchor="middle" fill="#9aa4b5" font-size="11">blank line +</text><text x="576" y="112" text-anchor="middle" fill="#9aa4b5" font-size="11">raw text</text>
+      <rect x="672" y="30" width="140" height="96" rx="8" fill="#12202e" stroke="#2a3140"/><text x="742" y="62" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">Embed</text><text x="742" y="80" text-anchor="middle" fill="#9aa4b5" font-size="11">MiniLM-L6-v2</text><text x="742" y="96" text-anchor="middle" fill="#9aa4b5" font-size="11">384-dim, cosine</text><text x="742" y="112" text-anchor="middle" fill="#9aa4b5" font-size="11">via Chroma EF</text>
+      <rect x="838" y="30" width="134" height="96" rx="8" fill="#0c0f14" stroke="#7dffa8"/><text x="905" y="62" text-anchor="middle" fill="#7dffa8" font-size="12" font-weight="bold">Chroma add</text><text x="905" y="80" text-anchor="middle" fill="#9aa4b5" font-size="11">id, vector,</text><text x="905" y="96" text-anchor="middle" fill="#9aa4b5" font-size="11">metadata</text><text x="905" y="112" text-anchor="middle" fill="#9aa4b5" font-size="11">batch = 256</text>
+      <line x1="148" y1="78" x2="172" y2="78" stroke="#9aa4b5" marker-end="url(#a2)"/><line x1="314" y1="78" x2="338" y2="78" stroke="#9aa4b5" marker-end="url(#a2)"/><line x1="480" y1="78" x2="504" y2="78" stroke="#9aa4b5" marker-end="url(#a2)"/><line x1="646" y1="78" x2="670" y2="78" stroke="#9aa4b5" marker-end="url(#a2)"/><line x1="812" y1="78" x2="836" y2="78" stroke="#9aa4b5" marker-end="url(#a2)"/>
+      <text x="490" y="152" text-anchor="middle" fill="#9aa4b5" font-size="11">Per-row try/except → bad rating/date fall back to 0 / 0-0 instead of raising · empty text skipped · counters printed at end</text>
+    </svg>
+    <figcaption><b>Figure 2 — Ingest flowchart.</b> Six stages per row; the embedding function runs inside <code class="inline">collection.add()</code>, and <code class="inline">--reset</code> drops the collection first.</figcaption>
+  </figure>
+<pre>python -m rag.cli ingest --reset
+# → "Indexing reviews: 100% 42656/42656" then "Indexed 42656 documents into Chroma at .chroma/"
+# Re-run after data changes; always --reset after the season-label fix.</pre>
+  <h4>Row-failure policy (Fix 2)</h4>
+  <table><tr><th>Failure</th><th>Before</th><th>After</th></tr>
+  <tr><td><code class="inline">Year_Month="oops" / "2019-13"</code></td><td><code class="inline">ValueError</code> aborted all 42k rows</td><td><code class="inline">year=0, month=0, season=unknown</code>, row kept, counted</td></tr>
+  <tr><td>Bad <code class="inline">Rating</code></td><td><code class="inline">ValueError</code> aborted</td><td><code class="inline">rating=0</code>, row kept</td></tr>
+  <tr><td>Missing <code class="inline">Review_ID</code></td><td><code class="inline">KeyError</code></td><td>fallback <code class="inline">row-{idx}</code></td></tr>
+  <tr><td>Empty <code class="inline">Review_Text</code></td><td>skipped silently</td><td>skipped + counted</td></tr></table>
+</section>
+
+<!-- ================= 5 ================= -->
+<section class="card" id="askpath">
+  <h2>5. Ask pipeline &amp; sequence chart</h2>
+  <p><code class="inline">ask(question, k=20)</code> is five stages: infer → search → relax-loop → assemble → generate. The sequence chart below shows every cross-component message for the canonical example <em>“What do visitors from Australia say about Hong Kong Disneyland?”</em>.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 980 150" role="img" aria-label="Ask pipeline flowchart">
+      <defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9aa4b5"/></marker></defs>
+      <rect x="8" y="24" width="140" height="80" rx="8" fill="#12202e" stroke="#2a3140"/><text x="78" y="54" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">Question</text><text x="78" y="72" text-anchor="middle" fill="#9aa4b5" font-size="11">string + k</text>
+      <rect x="174" y="24" width="140" height="80" rx="8" fill="#12202e" stroke="#2a3140"/><text x="244" y="54" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">interpret_query</text><text x="244" y="72" text-anchor="middle" fill="#9aa4b5" font-size="11">filters.py</text>
+      <rect x="340" y="24" width="140" height="80" rx="8" fill="#12202e" stroke="#2a3140"/><text x="410" y="54" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">retrieve</text><text x="410" y="72" text-anchor="middle" fill="#9aa4b5" font-size="11">where + vector</text>
+      <rect x="506" y="24" width="140" height="80" rx="8" fill="#12202e" stroke="#7cc4ff"/><text x="576" y="54" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">Relax loop</text><text x="576" y="72" text-anchor="middle" fill="#9aa4b5" font-size="11">on zero hits</text>
+      <rect x="672" y="24" width="140" height="80" rx="8" fill="#12202e" stroke="#2a3140"/><text x="742" y="54" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">answer_</text><text x="742" y="70" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">question</text><text x="742" y="88" text-anchor="middle" fill="#9aa4b5" font-size="11">answer.py</text>
+      <rect x="838" y="24" width="134" height="80" rx="8" fill="#0c0f14" stroke="#7dffa8"/><text x="905" y="54" text-anchor="middle" fill="#7dffa8" font-size="12" font-weight="bold">Output</text><text x="905" y="72" text-anchor="middle" fill="#9aa4b5" font-size="11">LLM / snippets</text>
+      <line x1="148" y1="64" x2="172" y2="64" stroke="#9aa4b5" marker-end="url(#a3)"/><line x1="314" y1="64" x2="338" y2="64" stroke="#9aa4b5" marker-end="url(#a3)"/><line x1="480" y1="64" x2="504" y2="64" stroke="#9aa4b5" marker-end="url(#a3)"/><line x1="646" y1="64" x2="670" y2="64" stroke="#9aa4b5" marker-end="url(#a3)"/><line x1="812" y1="64" x2="836" y2="64" stroke="#9aa4b5" marker-end="url(#a3)"/>
+      <text x="490" y="132" text-anchor="middle" fill="#9aa4b5" font-size="11">CLI prints inferred filters → relaxation notes → “Retrieved N chunks” → answer</text>
+    </svg>
+    <figcaption><b>Figure 3 — Ask flowchart.</b> The relax loop (highlighted) retries with progressively weaker <code class="inline">where</code> clauses until hits are found or all filters are dropped.</figcaption>
+  </figure>
+  <figure class="diagram">
+    <svg viewBox="0 0 980 500" role="img" aria-label="Sequence diagram of ask">
+      <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9aa4b5"/></marker></defs>
+      <rect x="10" y="8" width="110" height="34" rx="7" fill="#12202e" stroke="#2a3140"/><text x="65" y="30" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">User</text>
+      <rect x="190" y="8" width="110" height="34" rx="7" fill="#12202e" stroke="#2a3140"/><text x="245" y="30" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">CLI</text>
+      <rect x="360" y="8" width="110" height="34" rx="7" fill="#12202e" stroke="#2a3140"/><text x="415" y="30" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">filters.py</text>
+      <rect x="530" y="8" width="110" height="34" rx="7" fill="#12202e" stroke="#2a3140"/><text x="585" y="30" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">Chroma</text>
+      <rect x="690" y="8" width="110" height="34" rx="7" fill="#12202e" stroke="#2a3140"/><text x="745" y="30" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">answer.py</text>
+      <rect x="850" y="8" width="110" height="34" rx="7" fill="#12202e" stroke="#2a3140"/><text x="905" y="30" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">OpenAI</text>
+      <line x1="65" y1="48" x2="65" y2="486" stroke="#2a3140" stroke-dasharray="5 5"/><line x1="245" y1="48" x2="245" y2="486" stroke="#2a3140" stroke-dasharray="5 5"/><line x1="415" y1="48" x2="415" y2="486" stroke="#2a3140" stroke-dasharray="5 5"/><line x1="585" y1="48" x2="585" y2="486" stroke="#2a3140" stroke-dasharray="5 5"/><line x1="745" y1="48" x2="745" y2="486" stroke="#2a3140" stroke-dasharray="5 5"/><line x1="905" y1="48" x2="905" y2="486" stroke="#2a3140" stroke-dasharray="5 5"/>
+      <text x="150" y="68" text-anchor="middle" fill="#9aa4b5" font-size="11">1 · ask "Australia + HK?"</text><line x1="65" y1="74" x2="243" y2="74" stroke="#9aa4b5" marker-end="url(#a4)"/>
+      <text x="330" y="104" text-anchor="middle" fill="#9aa4b5" font-size="11">2 · interpret_query()</text><line x1="245" y1="110" x2="413" y2="110" stroke="#9aa4b5" marker-end="url(#a4)"/>
+      <text x="330" y="140" text-anchor="middle" fill="#7dffa8" font-size="11">3 · QueryFilters (dashed = return)</text><line x1="413" y1="146" x2="247" y2="146" stroke="#7dffa8" stroke-dasharray="5 4" marker-end="url(#a4)"/>
+      <text x="415" y="182" text-anchor="middle" fill="#9aa4b5" font-size="11">4 · query + where {branch, location}</text><line x1="245" y1="188" x2="583" y2="188" stroke="#9aa4b5" marker-end="url(#a4)"/>
+      <text x="415" y="218" text-anchor="middle" fill="#7dffa8" font-size="11">5 · top-k hits + distances</text><line x1="583" y1="224" x2="247" y2="224" stroke="#7dffa8" stroke-dasharray="5 4" marker-end="url(#a4)"/>
+      <rect x="245" y="242" width="515" height="52" rx="7" fill="none" stroke="#ffd67c" stroke-dasharray="6 4"/>
+      <text x="255" y="262" fill="#ffd67c" font-size="11">alt · zero hits → retry with relaxed where (drop location → months → years → branch)</text>
+      <text x="255" y="280" fill="#9aa4b5" font-size="11">each retry repeats messages 4–5; first non-empty result wins + note accumulates</text>
+      <text x="495" y="316" text-anchor="middle" fill="#9aa4b5" font-size="11">6 · answer_question(q, hits, used-filters)</text><line x1="245" y1="322" x2="743" y2="322" stroke="#9aa4b5" marker-end="url(#a4)"/>
+      <rect x="690" y="338" width="270" height="96" rx="7" fill="none" stroke="#7cc4ff" stroke-dasharray="6 4"/>
+      <text x="700" y="358" fill="#7cc4ff" font-size="11">alt · generation branch</text>
+      <text x="700" y="376" fill="#9aa4b5" font-size="11">7a · key set → prompt+context → summary+cites</text>
+      <text x="700" y="394" fill="#9aa4b5" font-size="11">7b · no key → top-8 snippets + metadata</text>
+      <line x1="745" y1="404" x2="903" y2="404" stroke="#9aa4b5" marker-end="url(#a4)"/>
+      <line x1="903" y1="420" x2="747" y2="420" stroke="#7dffa8" stroke-dasharray="5 4" marker-end="url(#a4)"/>
+      <text x="150" y="466" text-anchor="middle" fill="#9aa4b5" font-size="11">8 · printed answer</text><line x1="243" y1="472" x2="67" y2="472" stroke="#9aa4b5" marker-end="url(#a4)"/>
+    </svg>
+    <figcaption><b>Figure 4 — Sequence chart of <code class="inline">ask</code>.</b> Solid arrows are calls, dashed are returns. Steps 4–5 loop inside the relaxation <code class="inline">alt</code>; step 7 branches on <code class="inline">OPENAI_API_KEY</code>. Time flows downward; participants never call backwards except via returns.</figcaption>
+  </figure>
+  <h4>Message inventory (what crosses each arrow)</h4>
+  <table><tr><th>#</th><th>From → To</th><th>Payload</th></tr>
+  <tr><td>1</td><td>User → CLI</td><td>question string, <code class="inline">-k</code> (default 20)</td></tr>
+  <tr><td>2–3</td><td>CLI ⇄ filters</td><td>question → <code class="inline">QueryFilters(branch, reviewer_location, months, years, relaxations=[])</code></td></tr>
+  <tr><td>4–5</td><td>CLI ⇄ Chroma (via <code class="inline">retrieve()</code>)</td><td>embedded question + <code class="inline">where</code> → <code class="inline">ids / documents / metadatas / distances</code></td></tr>
+  <tr><td>6</td><td>CLI → answer</td><td>question + packed hits + used filters (incl. relaxation notes)</td></tr>
+  <tr><td>7a</td><td>answer ⇄ OpenAI</td><td>system + user prompt (≤12k chars context) → concise grounded summary with <code class="inline">(ReviewID)</code> cites, temp 0.2</td></tr>
+  <tr><td>7b</td><td>answer → CLI</td><td>extractive fallback text (no LLM call)</td></tr>
+  <tr><td>8</td><td>CLI → User</td><td>filters + notes + “Retrieved N chunks” + answer on stdout</td></tr></table>
+</section>
+
+<!-- ================= 6 ================= -->
+<section class="card" id="modules">
+  <h2>6. Module reference</h2>
+  <table>
+    <tr><th>File</th><th>Responsibility</th><th>Key symbols</th></tr>
+    <tr><td><code class="inline">rag/cli.py</code> (73 lines)</td><td>Argparse entry: <code class="inline">ingest / ask / show-filters</code>; all printing lives here.</td><td><code class="inline">main()</code>, <code class="inline">_cmd_ingest / _cmd_ask / _cmd_show_filters</code></td></tr>
+    <tr><td><code class="inline">rag/config.py</code> (21 lines)</td><td>Repo-root paths, <code class="inline">.env</code> load, HF cache env (<code class="inline">HF_HOME / TRANSFORMERS_CACHE / HUGGINGFACE_HUB_CACHE</code> → <code class="inline">.hf_cache/</code>).</td><td><code class="inline">DEFAULT_CSV, CHROMA_DIR, HF_CACHE, COLLECTION_NAME, EMBEDDING_MODEL</code></td></tr>
+    <tr><td><code class="inline">rag/metadata.py</code> (102 lines)</td><td>Date parsing, park-local seasons, month maps.</td><td><code class="inline">parse_year_month(), month_to_season(month, branch), season_to_months(season, branch), BRANCH_SEASON_TO_MONTHS</code></td></tr>
+    <tr><td><code class="inline">rag/filters.py</code> (205 lines)</td><td>NL → <code class="inline">QueryFilters</code>; Chroma <code class="inline">where</code> builder.</td><td><code class="inline">interpret_query(), infer_branch/location/months/years(), build_chroma_where()</code></td></tr>
+    <tr><td><code class="inline">rag/embeddings.py</code> (35 lines)</td><td>Chroma SentenceTransformer fn; <code class="inline">local_files_only=True</code> once a snapshot exists under <code class="inline">.hf_cache/</code> (offline asks).</td><td><code class="inline">chroma_sentence_transformer_ef(), model_cached_locally()</code></td></tr>
+    <tr><td><code class="inline">rag/ingest.py</code> (100 lines)</td><td>Streaming CSV → Chroma, batched (256), resilient rows.</td><td><code class="inline">ingest_csv(csv_path, reset, batch_size)</code></td></tr>
+    <tr><td><code class="inline">rag/retrieve.py</code> (90 lines)</td><td>Filtered vector search + ordered relaxation + result packing.</td><td><code class="inline">retrieve(question, n_results, filters), _relax_filters(), _pack_results()</code></td></tr>
+    <tr><td><code class="inline">rag/answer.py</code> (106 lines)</td><td>Deduped context formatting (12k budget), OpenAI or extractive path.</td><td><code class="inline">answer_question(), _format_context(), _review_body(), _answer_openai / _answer_extractive()</code></td></tr>
+  </table>
+  <p>Models: embedding <code class="inline">sentence-transformers/all-MiniLM-L6-v2</code> (384-dim, cosine HNSW); LLM <code class="inline">OPENAI_MODEL</code> default <code class="inline">gpt-4o-mini</code>, temperature 0.2. Retrieval default <code class="inline">k=20</code>; fallback shows top 8.</p>
+</section>
+
+<!-- ================= 7 ================= -->
+<section class="card" id="storage">
+  <h2>7. Storage, embeddings &amp; document schema</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 980 236" role="img" aria-label="Storage and embedding diagram">
+      <defs><marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9aa4b5"/></marker></defs>
+      <rect x="10" y="30" width="270" height="150" rx="8" fill="#12202e" stroke="#2a3140"/>
+      <text x="145" y="54" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">Stored document (string)</text>
+      <text x="145" y="76" text-anchor="middle" fill="#9aa4b5" font-size="11">Branch: … Location: … Visit: …</text>
+      <text x="145" y="93" text-anchor="middle" fill="#9aa4b5" font-size="11">Rating: … Season (park-local): …</text>
+      <text x="145" y="118" text-anchor="middle" fill="#9aa4b5" font-size="11">────────  blank line  ────────</text>
+      <text x="145" y="140" text-anchor="middle" fill="#e8ecf3" font-size="11">&lt;raw review text&gt;</text>
+      <text x="145" y="160" text-anchor="middle" fill="#9aa4b5" font-size="11">prefix biases similarity;</text>
+      <text x="145" y="176" text-anchor="middle" fill="#9aa4b5" font-size="11">stripped at answer time</text>
+      <rect x="330" y="30" width="270" height="68" rx="8" fill="#0c0f14" stroke="#7cc4ff"/>
+      <text x="465" y="54" text-anchor="middle" fill="#7cc4ff" font-size="12" font-weight="bold">Vector (384-dim)</text>
+      <text x="465" y="73" text-anchor="middle" fill="#9aa4b5" font-size="11">MiniLM-L6-v2 · cosine (HNSW)</text>
+      <text x="465" y="89" text-anchor="middle" fill="#9aa4b5" font-size="11">computed inside collection.add()</text>
+      <rect x="330" y="112" width="270" height="68" rx="8" fill="#0c0f14" stroke="#7dffa8"/>
+      <text x="465" y="136" text-anchor="middle" fill="#7dffa8" font-size="12" font-weight="bold">Metadata payload (8 keys)</text>
+      <text x="465" y="155" text-anchor="middle" fill="#9aa4b5" font-size="11">review_id · branch · location · rating</text>
+      <text x="465" y="171" text-anchor="middle" fill="#9aa4b5" font-size="11">year · month · year_month · season</text>
+      <rect x="650" y="30" width="320" height="150" rx="8" fill="#0c0f14" stroke="#2a3140"/>
+      <text x="810" y="54" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">Chroma collection</text>
+      <text x="810" y="73" text-anchor="middle" fill="#9aa4b5" font-size="11">disneyland_reviews @ .chroma/</text>
+      <text x="810" y="93" text-anchor="middle" fill="#9aa4b5" font-size="11">PersistentClient · get_or_create</text>
+      <text x="810" y="113" text-anchor="middle" fill="#9aa4b5" font-size="11">id = {review_id}-{row_index}</text>
+      <text x="810" y="133" text-anchor="middle" fill="#9aa4b5" font-size="11">query(texts=[q], n_results=k,</text>
+      <text x="810" y="149" text-anchor="middle" fill="#9aa4b5" font-size="11">where={…}) → ids/docs/metas/dists</text>
+      <text x="810" y="169" text-anchor="middle" fill="#9aa4b5" font-size="11">EF cached in .hf_cache/ → offline</text>
+      <line x1="280" y1="64" x2="328" y2="64" stroke="#9aa4b5" marker-end="url(#a5)"/>
+      <line x1="280" y1="146" x2="328" y2="146" stroke="#9aa4b5" marker-end="url(#a5)"/>
+      <line x1="600" y1="105" x2="648" y2="105" stroke="#9aa4b5" marker-end="url(#a5)"/>
+      <text x="465" y="208" text-anchor="middle" fill="#9aa4b5" font-size="11">Why both? The prefix steers semantic ranking toward the right park/date; the payload enables exact where-clauses and display without re-parsing text.</text>
+    </svg>
+    <figcaption><b>Figure 5 — What is stored per review.</b> One string is embedded; the same string’s head plus a structured payload drives filtering and display.</figcaption>
+  </figure>
+<pre>Branch: Disneyland_HongKong. Reviewer location: Australia. Visit: 2019-4. Rating: 4/5. Season (park-local): spring.
+
+HK Disneyland is a great compact park. ... no where near as busy as LA Disneyland. ...</pre>
+  <h4>Chroma <code class="inline">where</code> examples (built by <code class="inline">build_chroma_where</code>)</h4>
+<pre>-- single filter
+{"branch": "Disneyland_HongKong"}
+
+-- combined (Q: "Australia reviews of HK Disneyland in summer 2015?")
+{"$and": [
+  {"branch": "Disneyland_HongKong"},
+  {"reviewer_location": "Australia"},
+  {"month": {"$in": [6, 7, 8, 9]}},
+  {"year":  {"$in": [2015]}}
+]}
+
+-- no filters recognised → where=None (pure semantic search)</pre>
+</section>
+
+<!-- ================= 8 ================= -->
+<section class="card" id="filters">
+  <h2>8. Filter inference (NL → metadata)</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 980 300" role="img" aria-label="Filter inference flow">
+      <defs><marker id="a6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9aa4b5"/></marker></defs>
+      <rect x="10" y="110" width="190" height="80" rx="8" fill="#12202e" stroke="#2a3140"/>
+      <text x="105" y="138" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">Question</text>
+      <text x="105" y="156" text-anchor="middle" fill="#9aa4b5" font-size="11">"Australia … HK …</text>
+      <text x="105" y="172" text-anchor="middle" fill="#9aa4b5" font-size="11">summer 2015?"</text>
+      <rect x="260" y="14" width="330" height="60" rx="8" fill="#0c0f14" stroke="#2a3140"/><text x="425" y="36" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">infer_branch · \b regex, longest-first</text><text x="425" y="54" text-anchor="middle" fill="#9aa4b5" font-size="11">17 aliases → Disneyland_HongKong</text>
+      <rect x="260" y="86" width="330" height="60" rx="8" fill="#0c0f14" stroke="#2a3140"/><text x="425" y="108" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">infer_reviewer_location · from-phrase, then allowlist</text><text x="425" y="126" text-anchor="middle" fill="#9aa4b5" font-size="11">42 places → Australia</text>
+      <rect x="260" y="158" width="330" height="60" rx="8" fill="#0c0f14" stroke="#2a3140"/><text x="425" y="180" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">infer_months(q, branch) · park-aware seasons</text><text x="425" y="198" text-anchor="middle" fill="#9aa4b5" font-size="11">summer + HK → [6,7,8,9] (not [6,7,8])</text>
+      <rect x="260" y="230" width="330" height="60" rx="8" fill="#0c0f14" stroke="#2a3140"/><text x="425" y="252" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">infer_years · 4-digit, 1990–2030</text><text x="425" y="270" text-anchor="middle" fill="#9aa4b5" font-size="11">"2015" → [2015]; "2015-2017" → both</text>
+      <rect x="650" y="86" width="140" height="132" rx="8" fill="#12202e" stroke="#7cc4ff"/><text x="720" y="116" text-anchor="middle" fill="#7cc4ff" font-size="12" font-weight="bold">QueryFilters</text><text x="720" y="136" text-anchor="middle" fill="#9aa4b5" font-size="11">branch</text><text x="720" y="152" text-anchor="middle" fill="#9aa4b5" font-size="11">location</text><text x="720" y="168" text-anchor="middle" fill="#9aa4b5" font-size="11">months</text><text x="720" y="184" text-anchor="middle" fill="#9aa4b5" font-size="11">years</text><text x="720" y="200" text-anchor="middle" fill="#9aa4b5" font-size="11">relaxations=[]</text>
+      <rect x="820" y="86" width="150" height="132" rx="8" fill="#0c0f14" stroke="#7dffa8"/><text x="895" y="116" text-anchor="middle" fill="#7dffa8" font-size="12" font-weight="bold">where-clause</text><text x="895" y="136" text-anchor="middle" fill="#9aa4b5" font-size="11">None / single /</text><text x="895" y="152" text-anchor="middle" fill="#9aa4b5" font-size="11">$and[…] for</text><text x="895" y="168" text-anchor="middle" fill="#9aa4b5" font-size="11">retrieve()</text>
+      <line x1="200" y1="150" x2="258" y2="44" stroke="#9aa4b5" marker-end="url(#a6)"/><line x1="200" y1="150" x2="258" y2="116" stroke="#9aa4b5" marker-end="url(#a6)"/><line x1="200" y1="150" x2="258" y2="188" stroke="#9aa4b5" marker-end="url(#a6)"/><line x1="200" y1="150" x2="258" y2="260" stroke="#9aa4b5" marker-end="url(#a6)"/>
+      <line x1="590" y1="116" x2="648" y2="140" stroke="#9aa4b5" marker-end="url(#a6)"/><line x1="790" y1="152" x2="818" y2="152" stroke="#9aa4b5" marker-end="url(#a6)"/>
+    </svg>
+    <figcaption><b>Figure 6 — NL → metadata inference.</b> Branch is inferred first and passed into month inference so season words expand park-aware. Debug any question with <code class="inline">show-filters</code>.</figcaption>
+  </figure>
+  <div class="grid2">
+    <div>
+      <h4>Branch aliases (representative)</h4>
+      <div class="klist"><span>disneyland hong kong → HK</span><span>hong kong → HK</span><span>hk / hkdl → HK</span><span>hongkong → HK</span><span>disneyland paris → Paris</span><span>eurodisney → Paris</span><span>paris → Paris</span><span>disneyland california → CA</span><span>anaheim → CA</span><span>california adventure → CA</span><span>california → CA</span></div>
+      <p class="muted">Matched longest-first with <code class="inline">\b…\b</code>: “comparison between parks” no longer triggers Paris; “shaky” no longer triggers HK.</p>
+    </div>
+    <div>
+      <h4>Month / season edge cases</h4>
+      <table><tr><th>Input</th><th>Result</th><th>Why</th></tr>
+      <tr><td>“What may visitors expect?”</td><td>no month</td><td>lowercase modal <code class="inline">may</code> ignored</td></tr>
+      <tr><td>“Visiting in May”</td><td><code class="inline">[5]</code></td><td>capitalised month counts</td></tr>
+      <tr><td>“Maybe crowded?”</td><td>no month</td><td>word boundary blocks “may” in “maybe”</td></tr>
+      <tr><td>“Trip in Jan / Sept.”</td><td><code class="inline">[1] / [9]</code></td><td>abbreviations supported</td></tr>
+      <tr><td>“smart tips?”</td><td>no month</td><td>boundary blocks “mar” in “smart”</td></tr></table>
+    </div>
+  </div>
+  <h3>Park-local seasons (Fix 4)</h3>
+  <p>California and Paris use meteorological Northern-Hemisphere seasons. Hong Kong is subtropical (Hong Kong Observatory climatology: long hot summer, short autumn), so September counts as <strong>summer</strong> there and autumn is October–November only. Filtering always happens on month numbers — season names are just the user-facing shorthand.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 980 220" role="img" aria-label="Season to month mapping per park">
+      <defs></defs>
+      <text x="10" y="66" fill="#e8ecf3" font-size="12" font-weight="bold">CA / Paris</text>
+      <text x="10" y="140" fill="#e8ecf3" font-size="12" font-weight="bold">Hong Kong</text>
+      <text x="140" y="22" fill="#9aa4b5" font-size="11">J</text><text x="212" y="22" fill="#9aa4b5" font-size="11">F</text><text x="284" y="22" fill="#9aa4b5" font-size="11">M</text><text x="356" y="22" fill="#9aa4b5" font-size="11">A</text><text x="428" y="22" fill="#9aa4b5" font-size="11">M</text><text x="500" y="22" fill="#9aa4b5" font-size="11">J</text><text x="572" y="22" fill="#9aa4b5" font-size="11">J</text><text x="644" y="22" fill="#9aa4b5" font-size="11">A</text><text x="716" y="22" fill="#9aa4b5" font-size="11">S</text><text x="788" y="22" fill="#9aa4b5" font-size="11">O</text><text x="860" y="22" fill="#9aa4b5" font-size="11">N</text><text x="932" y="22" fill="#9aa4b5" font-size="11">D</text>
+      <g font-size="11" text-anchor="middle">
+        <rect x="116" y="34" width="66" height="44" rx="6" fill="#7cc4ff"/><text x="149" y="60" fill="#0f1115">winter</text>
+        <rect x="188" y="34" width="66" height="44" rx="6" fill="#7cc4ff"/><text x="221" y="60" fill="#0f1115">winter</text>
+        <rect x="260" y="34" width="66" height="44" rx="6" fill="#7dffa8"/><text x="293" y="60" fill="#0f1115">spring</text>
+        <rect x="332" y="34" width="66" height="44" rx="6" fill="#7dffa8"/><text x="365" y="60" fill="#0f1115">spring</text>
+        <rect x="404" y="34" width="66" height="44" rx="6" fill="#7dffa8"/><text x="437" y="60" fill="#0f1115">spring</text>
+        <rect x="476" y="34" width="66" height="44" rx="6" fill="#ffd67c"/><text x="509" y="60" fill="#0f1115">summer</text>
+        <rect x="548" y="34" width="66" height="44" rx="6" fill="#ffd67c"/><text x="581" y="60" fill="#0f1115">summer</text>
+        <rect x="620" y="34" width="66" height="44" rx="6" fill="#ffd67c"/><text x="653" y="60" fill="#0f1115">summer</text>
+        <rect x="692" y="34" width="66" height="44" rx="6" fill="#ff9d7c"/><text x="725" y="60" fill="#0f1115">autumn</text>
+        <rect x="764" y="34" width="66" height="44" rx="6" fill="#ff9d7c"/><text x="797" y="60" fill="#0f1115">autumn</text>
+        <rect x="836" y="34" width="66" height="44" rx="6" fill="#ff9d7c"/><text x="869" y="60" fill="#0f1115">autumn</text>
+        <rect x="908" y="34" width="66" height="44" rx="6" fill="#7cc4ff"/><text x="941" y="60" fill="#0f1115">winter</text>
+        <rect x="116" y="108" width="66" height="44" rx="6" fill="#7cc4ff"/><text x="149" y="134" fill="#0f1115">winter</text>
+        <rect x="188" y="108" width="66" height="44" rx="6" fill="#7cc4ff"/><text x="221" y="134" fill="#0f1115">winter</text>
+        <rect x="260" y="108" width="66" height="44" rx="6" fill="#7dffa8"/><text x="293" y="134" fill="#0f1115">spring</text>
+        <rect x="332" y="108" width="66" height="44" rx="6" fill="#7dffa8"/><text x="365" y="134" fill="#0f1115">spring</text>
+        <rect x="404" y="108" width="66" height="44" rx="6" fill="#7dffa8"/><text x="437" y="134" fill="#0f1115">spring</text>
+        <rect x="476" y="108" width="66" height="44" rx="6" fill="#ffd67c"/><text x="509" y="134" fill="#0f1115">summer</text>
+        <rect x="548" y="108" width="66" height="44" rx="6" fill="#ffd67c"/><text x="581" y="134" fill="#0f1115">summer</text>
+        <rect x="620" y="108" width="66" height="44" rx="6" fill="#ffd67c"/><text x="653" y="134" fill="#0f1115">summer</text>
+        <rect x="692" y="108" width="66" height="44" rx="6" fill="#ffd67c" stroke="#e8ecf3" stroke-width="2"/><text x="725" y="134" fill="#0f1115">summer★</text>
+        <rect x="764" y="108" width="66" height="44" rx="6" fill="#ff9d7c"/><text x="797" y="134" fill="#0f1115">autumn</text>
+        <rect x="836" y="108" width="66" height="44" rx="6" fill="#ff9d7c"/><text x="869" y="134" fill="#0f1115">autumn</text>
+        <rect x="908" y="108" width="66" height="44" rx="6" fill="#7cc4ff"/><text x="941" y="134" fill="#0f1115">winter</text>
+      </g>
+      <text x="490" y="180" text-anchor="middle" fill="#9aa4b5" font-size="11">★ September differs: autumn in CA/Paris, summer in Hong Kong → "summer in HK" searches [6,7,8,9]</text>
+      <text x="490" y="200" text-anchor="middle" fill="#9aa4b5" font-size="11">winter #7cc4ff · spring #7dffa8 · summer #ffd67c · autumn #ff9d7c · implemented in BRANCH_SEASON_TO_MONTHS</text>
+    </svg>
+    <figcaption><b>Figure 7 — Season → month grids.</b> The only park difference is September (outlined). “Fall” is treated as “autumn” everywhere.</figcaption>
+  </figure>
+</section>
+
+<!-- ================= 9 ================= -->
+<section class="card" id="retrieval">
+  <h2>9. Retrieval &amp; relaxation</h2>
+  <p><code class="inline">retrieve(question, n_results=20)</code> embeds the question with the same MiniLM model, issues <code class="inline">collection.query(query_texts=[q], n_results=k, where=…)</code>, and packs <code class="inline">id / document / metadata / distance</code> per hit. If a strict filter yields nothing, it retries with progressively weaker filters — <strong>first non-empty result wins</strong>, and every dropped constraint is recorded.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 980 300" role="img" aria-label="Relaxation flowchart">
+      <defs><marker id="a7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9aa4b5"/></marker>
+      <marker id="a7g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7dffa8"/></marker></defs>
+      <rect x="10" y="30" width="170" height="70" rx="8" fill="#12202e" stroke="#7cc4ff"/><text x="95" y="56" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">Strict query</text><text x="95" y="74" text-anchor="middle" fill="#9aa4b5" font-size="11">all inferred filters</text>
+      <rect x="210" y="30" width="170" height="70" rx="8" fill="#12202e" stroke="#2a3140"/><text x="295" y="56" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">− location</text><text x="295" y="74" text-anchor="middle" fill="#9aa4b5" font-size="11">drop reviewer_location</text>
+      <rect x="410" y="30" width="170" height="70" rx="8" fill="#12202e" stroke="#2a3140"/><text x="495" y="56" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">− months</text><text x="495" y="74" text-anchor="middle" fill="#9aa4b5" font-size="11">drop month/season</text>
+      <rect x="610" y="30" width="170" height="70" rx="8" fill="#12202e" stroke="#2a3140"/><text x="695" y="56" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">− years</text><text x="695" y="74" text-anchor="middle" fill="#9aa4b5" font-size="11">drop year (Fix 5)</text>
+      <rect x="810" y="30" width="160" height="70" rx="8" fill="#12202e" stroke="#2a3140"/><text x="890" y="56" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">− branch</text><text x="890" y="74" text-anchor="middle" fill="#9aa4b5" font-size="11">drop branch (last)</text>
+      <line x1="180" y1="65" x2="208" y2="65" stroke="#9aa4b5" marker-end="url(#a7)"/><line x1="380" y1="65" x2="408" y2="65" stroke="#9aa4b5" marker-end="url(#a7)"/><line x1="580" y1="65" x2="608" y2="65" stroke="#9aa4b5" marker-end="url(#a7)"/><line x1="780" y1="65" x2="808" y2="65" stroke="#9aa4b5" marker-end="url(#a7)"/>
+      <text x="194" y="56" text-anchor="middle" fill="#9aa4b5" font-size="10">0 hits</text><text x="394" y="56" text-anchor="middle" fill="#9aa4b5" font-size="10">0 hits</text><text x="594" y="56" text-anchor="middle" fill="#9aa4b5" font-size="10">0 hits</text><text x="794" y="56" text-anchor="middle" fill="#9aa4b5" font-size="10">0 hits</text>
+      <rect x="10" y="170" width="960" height="60" rx="8" fill="#0c0f14" stroke="#7dffa8"/>
+      <text x="490" y="194" text-anchor="middle" fill="#7dffa8" font-size="12" font-weight="bold">Any stage with hits → return immediately with that stage's filters + accumulated notes</text>
+      <text x="490" y="212" text-anchor="middle" fill="#9aa4b5" font-size="11">duplicate where-clauses skipped via JSON-key dedup · max chain length 5 (strict + 4 drops)</text>
+      <line x1="95" y1="100" x2="95" y2="168" stroke="#7dffa8" marker-end="url(#a7g)"/><line x1="295" y1="100" x2="295" y2="168" stroke="#7dffa8" marker-end="url(#a7g)"/><line x1="495" y1="100" x2="495" y2="168" stroke="#7dffa8" marker-end="url(#a7g)"/><line x1="695" y1="100" x2="695" y2="168" stroke="#7dffa8" marker-end="url(#a7g)"/><line x1="890" y1="100" x2="890" y2="168" stroke="#7dffa8" marker-end="url(#a7g)"/>
+      <text x="95" y="150" text-anchor="middle" fill="#7dffa8" font-size="10">hits → return</text><text x="295" y="150" text-anchor="middle" fill="#7dffa8" font-size="10">hits → return</text><text x="495" y="150" text-anchor="middle" fill="#7dffa8" font-size="10">hits → return</text><text x="695" y="150" text-anchor="middle" fill="#7dffa8" font-size="10">hits → return</text><text x="890" y="150" text-anchor="middle" fill="#7dffa8" font-size="10">hits → return</text>
+      <text x="490" y="258" text-anchor="middle" fill="#9aa4b5" font-size="11">Ordering rationale: location is sparsest (dropped first), branch is most structural (dropped last) · notes e.g. "Dropped year filter (no hits)."</text>
+    </svg>
+    <figcaption><b>Figure 8 — Relaxation flowchart.</b> Horizontal arrows advance only on zero hits; green arrows exit with the first non-empty result. The CLI prints the used filters plus every relaxation note, and the notes are also injected into the LLM prompt.</figcaption>
+  </figure>
+</section>
+
+<!-- ================= 10 ================= -->
+<section class="card" id="answer">
+  <h2>10. Answer generation &amp; context budget</h2>
+  <p><code class="inline">answer_question(question, hits, filters)</code> has three exits: no hits → fixed message; key set → <code class="inline">_answer_openai</code>; no key → <code class="inline">_answer_extractive</code>. Context is capped at <strong>12,000 chars</strong> — whole review blocks are added until the next would overflow.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 980 250" role="img" aria-label="Context budget before and after dedup fix">
+      <defs></defs>
+      <text x="10" y="24" fill="#9aa4b5" font-size="12">BEFORE Fix 3 — each block carried the metadata prefix twice (header + embedded head)</text>
+      <rect x="10" y="34" width="960" height="40" rx="7" fill="none" stroke="#2a3140"/>
+      <rect x="12" y="36" width="300" height="36" rx="5" fill="#ff9d7c"/><text x="162" y="59" text-anchor="middle" fill="#0f1115" font-size="11">metadata header (~200 ch)</text>
+      <rect x="312" y="36" width="300" height="36" rx="5" fill="#ff9d7c" opacity="0.55"/><text x="462" y="59" text-anchor="middle" fill="#0f1115" font-size="11">duplicated prefix (~150 ch)</text>
+      <rect x="612" y="36" width="356" height="36" rx="5" fill="#7cc4ff"/><text x="790" y="59" text-anchor="middle" fill="#0f1115" font-size="11">review body</text>
+      <text x="10" y="112" fill="#9aa4b5" font-size="12">AFTER Fix 3 — _review_body() strips the prefix; header (from payload) + body only</text>
+      <rect x="10" y="122" width="960" height="40" rx="7" fill="none" stroke="#2a3140"/>
+      <rect x="12" y="124" width="300" height="36" rx="5" fill="#7dffa8"/><text x="162" y="147" text-anchor="middle" fill="#0f1115" font-size="11">metadata header (~200 ch)</text>
+      <rect x="312" y="124" width="656" height="36" rx="5" fill="#7cc4ff"/><text x="640" y="147" text-anchor="middle" fill="#0f1115" font-size="11">review body — ~150 chars reclaimed per block for real evidence</text>
+      <text x="10" y="192" fill="#9aa4b5" font-size="11">Budget: blocks appended while used + len(block) ≤ 12000 · fallback path ignores the budget and shows top-8 snippets (400 chars each).</text>
+      <text x="10" y="212" fill="#9aa4b5" font-size="11">Legacy indexes with "Season (NH)" prefixes are still stripped correctly (split on first blank line, head must start with "Branch:").</text>
+      <text x="10" y="232" fill="#9aa4b5" font-size="11">Not to scale; widths illustrative. The 12k cap applies to the OpenAI prompt context only.</text>
+    </svg>
+    <figcaption><b>Figure 9 — Context budget, before vs after Fix 3.</b> ~150 chars saved per block; across ~20 candidate blocks that is roughly one extra review of evidence inside the same budget.</figcaption>
+  </figure>
+  <h4>OpenAI prompt (when key is set)</h4>
+<pre>system: You are an analyst for Disneyland guest reviews.
+  Answer ONLY using the provided review excerpts and their metadata.
+  If evidence is mixed, say so. If evidence is thin, say you are unsure.
+  Cite Review IDs in parentheses when you paraphrase specific reviews.
+  Keep the answer concise and practical for a customer-experience team.
+  (temperature 0.2, model = OPENAI_MODEL or gpt-4o-mini)
+
+user:   Question:
+  &lt;question&gt;
+
+  Note (retrieval):          # only when relaxation happened
+  Dropped reviewer_location filter (no hits).
+  ...
+
+  Retrieved reviews:
+  ---
+  Review ID: 670772142
+  Branch: Disneyland_HongKong
+  Reviewer location: Australia
+  Visit: 2019-4  Rating: 4/5
+  Text:
+  &lt;body only, no metadata prefix&gt;
+  ... (up to 12,000 chars)</pre>
+  <h4>Extractive fallback (no key)</h4>
+<pre>Open-ended synthesis needs an LLM. Set OPENAI_API_KEY for full answers.
+Below are the top retrieved reviews (by similarity) with metadata.
+
+&lt;relaxation notes, if any&gt;
+
+Q: &lt;question&gt;
+
+- [670772142] Disneyland_HongKong | Australia | 2019-4 | 4/5 — HK Disneyland is a great compact park. ...</pre>
+</section>
+
+<!-- ================= 11 ================= -->
+<section class="card" id="traces">
+  <h2>11. Worked end-to-end traces</h2>
+  <h4>Trace A — fully constrained (the Figure 4 example)</h4>
+<pre>Q: "What do visitors from Australia say about Hong Kong Disneyland?" -k 20
+
+interpret_query → branch=Disneyland_HongKong, location=Australia, months=None, years=None
+where → {"$and": [{"branch": "Disneyland_HongKong"}, {"reviewer_location": "Australia"}]}
+Chroma → N hits (CA/Paris/AU-other rows excluded before ranking)
+answer → grounded summary citing e.g. (670772142), (670607911)</pre>
+  <h4>Trace B — season + relaxation path</h4>
+<pre>Q: "Is spring a good time to visit Disneyland?"   (no park mentioned)
+
+interpret_query → branch=None, months=[3,4,5] (all parks use the same spring)
+where → {"month": {"$in": [3,4,5]}}
+if zero hits → notes would accumulate; normally spring is well covered (10,051 rows),
+so the strict query returns and no relaxation is printed.</pre>
+  <h4>Trace C — sparse combo showing every stage</h4>
+<pre>Q: "What did visitors from Malta say about HK Disneyland in winter 2011?"
+
+interpret_query → branch=HongKong, location=Malta, months=[12,1,2], years=[2011]
+attempt 1: all four clauses → likely 0 hits → note "Dropped reviewer_location…"
+attempt 2: HK + winter + 2011 → maybe 0 → note "Dropped month/season…"
+attempt 3: HK + 2011 → maybe 0 → note "Dropped year…"
+attempt 4: HK only → hits → answer carries 3 notes; LLM is told evidence was relaxed,
+so it must hedge ("limited evidence…").</pre>
+</section>
+
+<!-- ================= 12 ================= -->
+<section class="card" id="config">
+  <h2>12. Config &amp; CLI</h2>
+  <table>
+    <tr><th>Command</th><th>Effect</th><th>Example output</th></tr>
+    <tr><td><code class="inline">ingest [--reset] [--csv PATH]</code></td><td>Embed CSV → <code class="inline">.chroma/</code>. <code class="inline">--reset</code> drops the collection first; model cached in <code class="inline">.hf_cache/</code>.</td><td><code class="inline">Indexed 42656 documents into Chroma at .chroma/</code></td></tr>
+    <tr><td><code class="inline">ask "…" [-k 20]</code></td><td>Print filters → relaxations → count → answer.</td><td><code class="inline">--- Inferred filters --- branch: … / Retrieved 20 chunks --- …</code></td></tr>
+    <tr><td><code class="inline">show-filters "…"</code></td><td>Print <code class="inline">branch / reviewer_location / months / years</code> only.</td><td><code class="inline">branch: Disneyland_Paris / months: [6] / …</code></td></tr>
+  </table>
+  <p>Secrets: gitignored <code class="inline">.env</code> with <code class="inline">OPENAI_API_KEY</code> (optional <code class="inline">OPENAI_MODEL</code>), loaded by <code class="inline">rag/config.py</code> via <code class="inline">python-dotenv</code>; shell export also works. Never commit keys; production should use a secret manager (AWS/GCP/Vault) injected as env vars, CI via platform secrets.</p>
+  <h4>First-run checklist</h4>
+<pre>python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -r requirements.txt        # dotenv, chromadb, sentence-transformers, pandas, tqdm, openai
+python -m rag.cli ingest --reset       # a few minutes; downloads MiniLM once
+python -m rag.cli show-filters "Is Disneyland California crowded in June?"
+python -m rag.cli ask "What do visitors from Australia say about Hong Kong Disneyland?" -k 20</pre>
+</section>
+
+<!-- ================= 13 ================= -->
+<section class="card" id="fixes">
+  <h2>13. Fixes 1–5 (applied 2026-09-29)</h2>
+  <div class="fix"><h4>Fix 1 — Month matching used substring search <span class="pill-ok">✓ fixed</span></h4>
+  <p>Before: <code class="inline">"may" in query</code> fired on “maybe / may be”. After: word-boundary regex for all month names/abbreviations/seasons (Fig. 6); <code class="inline">may</code> requires capital <code class="inline">May</code> or month context; abbreviations supported. File: <code class="inline">rag/filters.py: infer_months</code>.</p></div>
+  <div class="fix"><h4>Fix 2 — One bad row killed the whole ingest; full CSV held in RAM <span class="pill-ok">✓ fixed</span></h4>
+  <p>Before: <code class="inline">rows = list(reader)</code> then bare parses — one <code class="inline">Year_Month="oops"</code> aborted 42k rows. After: streaming read, per-row <code class="inline">try/except</code> with safe defaults, skip-counters (Fig. 2). File: <code class="inline">rag/ingest.py: ingest_csv</code>.</p></div>
+  <div class="fix"><h4>Fix 3 — Metadata duplicated in LLM context <span class="pill-ok">✓ fixed</span></h4>
+  <p>Before: context pasted the whole stored doc under a metadata header (prefix twice). After: <code class="inline">_review_body()</code> shows body only (Fig. 9); handles legacy <code class="inline">Season (NH)</code> and new <code class="inline">Season (park-local)</code> prefixes. File: <code class="inline">rag/answer.py</code>.</p></div>
+  <div class="fix"><h4>Fix 4 — Single NH season model for all parks <span class="pill-ok">✓ fixed</span></h4>
+  <p>Before: September = autumn everywhere. After: park-local seasons via <code class="inline">BRANCH_SEASON_TO_MONTHS</code> (Fig. 7); HK summer = Jun–Sep, autumn = Oct–Nov; ingest labels <code class="inline">Season (park-local)</code>; month inference takes <code class="inline">branch</code>. Files: <code class="inline">rag/metadata.py</code>, <code class="inline">rag/filters.py</code>, <code class="inline">rag/ingest.py</code>.</p></div>
+  <div class="fix"><h4>Fix 5 — Branch substring matching; dead <code class="inline">years</code> field <span class="pill-ok">✓ fixed</span></h4>
+  <p>Before: <code class="inline">if alias in s</code> (“paris” ⊂ “comparison”); <code class="inline">years</code> always <code class="inline">None</code>. After: longest-first <code class="inline">\b</code> regex; new <code class="inline">infer_years()</code> (1990–2030, ranges) wired into <code class="inline">interpret_query</code>, <code class="inline">where</code>, relaxation (Fig. 8), and CLI output. Files: <code class="inline">rag/filters.py</code>, <code class="inline">rag/retrieve.py</code>, <code class="inline">rag/cli.py</code>.</p></div>
+  <p>Verification: <code class="inline">py_compile</code> clean; assertion suite covers branch boundaries (“comparison” → None), modal-“may”/“maybe” → None, “Jan” → [1], HK summer → [6,7,8,9], year ranges, relaxation chain length 5, single-occurrence metadata in context. (System python here is 3.9, so <code class="inline">rag/metadata.py</code> carries <code class="inline">from __future__ import annotations</code> for <code class="inline">X | None</code> syntax.)</p>
+</section>
+
+<!-- ================= 14 ================= -->
+<section class="card" id="git">
+  <h2>14. Git / committing the data</h2>
+  <p>Per your decision, the dataset <strong>is committed</strong>: <code class="inline">dataset/DisneylandReviews.csv</code> is tracked (31&nbsp;MB) and <code class="inline">.gitignore</code> intentionally does <em>not</em> exclude it. Still ignored: <code class="inline">.venv/, __pycache__/, .chroma/, .hf_cache/, .env, .DS_Store</code>. Docs live in <code class="inline">docs/</code>. The built vector index (<code class="inline">.chroma/</code>) stays gitignored — rebuild via <code class="inline">python -m rag.cli ingest --reset</code> after pulling the CSV.</p>
+</section>
+
+<!-- ================= 15 ================= -->
+<section class="card" id="eval">
+  <h2>15. Evaluation &amp; troubleshooting</h2>
+  <h3>Evaluation layers</h3>
+  <table><tr><th>#</th><th>Layer</th><th>What to measure</th></tr>
+  <tr><td>1</td><td>Gold Q&amp;A set</td><td>30–80 hand-written questions (branch × location × season × staff × crowding) with reference answers or must-cite Review IDs.</td></tr>
+  <tr><td>2</td><td>Retrieval</td><td>recall@k / nDCG: did the right reviews appear in top-k? Slice by filtered vs relaxed queries.</td></tr>
+  <tr><td>3</td><td>Answers</td><td>LLM-as-judge groundedness, relevance, faithfulness + human spot-checks; penalise uncited claims.</td></tr>
+  <tr><td>4</td><td>Metadata stress</td><td>Question pairs differing only by branch/month must change filters <em>and</em> answers (use <code class="inline">show-filters</code> diffs).</td></tr>
+  <tr><td>5</td><td>Ablations</td><td>dense-only vs +filters vs +relaxation; attribute gains per layer.</td></tr></table>
+  <h3>Troubleshooting</h3>
+  <ul>
+    <li><strong>Hugging Face / proxy errors on ask:</strong> after one good ingest the model loads offline (<code class="inline">local_files_only=True</code>); else try <code class="inline">unset HTTP_PROXY HTTPS_PROXY</code>.</li>
+    <li><strong>Slow first ask:</strong> cold load of MiniLM takes 1–2 min; later runs in the same shell are faster.</li>
+    <li><strong>Sparse combos:</strong> expect relaxation notes (country + park + month); the answer should state limited evidence.</li>
+    <li><strong>Re-index after these fixes:</strong> season labels and doc prefixes changed → run <code class="inline">python -m rag.cli ingest --reset</code> once.</li>
+  </ul>
+  <h3>Known limitations / future work</h3>
+  <ul>
+    <li>Location allowlist covers ~42 of 162 CSV locations; consider fuzzy matching or deriving the list from the data.</li>
+    <li>Ratings are stored but never used for filtering/ranking; a “low-rating only” intent is currently semantic-only.</li>
+    <li>No per-review language detection; non-English reviews embed poorly with MiniLM.</li>
+    <li>No eval harness or gold set checked in yet — §15.1–5 is the plan, not the implementation.</li>
+  </ul>
+</section>
+
+<footer>
+  RAGnaRock · <code class="inline">docs/implementation.html</code> · 9 figures (architecture, ingest, ask flow, sequence chart, storage, inference, seasons, relaxation, context budget) · covers <code class="inline">rag/cli.py, config.py, embeddings.py, filters.py, ingest.py, metadata.py, retrieve.py, answer.py</code> · dataset 42,656 rows.
+</footer>
+
+</div>
+</body>
+</html>

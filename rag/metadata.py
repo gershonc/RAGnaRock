@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 def parse_year_month(value: str) -> tuple[int, int]:
     s = str(value).strip()
     if not s or s.lower() == "missing":
@@ -12,10 +14,23 @@ def parse_year_month(value: str) -> tuple[int, int]:
     return year, month
 
 
-def month_to_season(month: int) -> str:
-    """Meteorological seasons, Northern Hemisphere (used consistently for all branches)."""
+def month_to_season(month: int, branch: str | None = None) -> str:
+    """Park-local season label.
+
+    California/Paris use meteorological NH seasons (DJF/MAM/JJA/SON).
+    Hong Kong is subtropical (HKO climatology): summer is long (Jun-Sep),
+    autumn is short (Oct-Nov), winter Dec-Feb, spring Mar-May.
+    """
     if month == 0:
         return "unknown"
+    if branch == "Disneyland_HongKong":
+        if month in (12, 1, 2):
+            return "winter"
+        if month in (3, 4, 5):
+            return "spring"
+        if month in (6, 7, 8, 9):
+            return "summer"
+        return "autumn"
     if month in (12, 1, 2):
         return "winter"
     if month in (3, 4, 5):
@@ -33,6 +48,28 @@ SEASON_TO_MONTHS = {
     "fall": [9, 10, 11],
 }
 
+# Park-local season -> months. Hong Kong summer extends through September
+# (HKO: hot/humid May-Sep), autumn is Oct-Nov only.
+BRANCH_SEASON_TO_MONTHS: dict[str, dict[str, list[int]]] = {
+    "Disneyland_California": dict(SEASON_TO_MONTHS),
+    "Disneyland_Paris": dict(SEASON_TO_MONTHS),
+    "Disneyland_HongKong": {
+        "winter": [12, 1, 2],
+        "spring": [3, 4, 5],
+        "summer": [6, 7, 8, 9],
+        "autumn": [10, 11],
+        "fall": [10, 11],
+    },
+}
+
+
+def season_to_months(season: str, branch: str | None = None) -> list[int]:
+    """Months for a season name, optionally park-aware."""
+    s = season.lower()
+    if branch and branch in BRANCH_SEASON_TO_MONTHS:
+        return list(BRANCH_SEASON_TO_MONTHS[branch].get(s, []))
+    return list(SEASON_TO_MONTHS.get(s, []))
+
 MONTH_NAME_TO_NUM = {
     "january": 1,
     "february": 2,
@@ -46,4 +83,20 @@ MONTH_NAME_TO_NUM = {
     "october": 10,
     "november": 11,
     "december": 12,
+}
+
+# Common abbreviations (matched with word boundaries in filters.py).
+MONTH_ABBR_TO_NUM = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "sept": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
 }

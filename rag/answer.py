@@ -6,11 +6,24 @@ from textwrap import dedent
 from rag.filters import QueryFilters
 
 
+def _review_body(document: str) -> str:
+    # Fix 3: stored docs are "metadata prefix + \n\n + review text" (see
+    # ingest.py). The context block already renders metadata from the
+    # payload, so only the body is shown to avoid duplicating it.
+    # Handles both "Season (NH)" (legacy index) and "Season (park-local)".
+    if "\n\n" in document:
+        head, body = document.split("\n\n", 1)
+        if head.lstrip().startswith("Branch:"):
+            return body.strip()
+    return document
+
+
 def _format_context(hits: list[dict], max_chars: int = 12000) -> str:
     parts: list[str] = []
     used = 0
     for h in hits:
         m = h.get("metadata") or {}
+        body = _review_body(h.get("document", ""))
         block = dedent(
             f"""
             ---
@@ -19,7 +32,7 @@ def _format_context(hits: list[dict], max_chars: int = 12000) -> str:
             Reviewer location: {m.get("reviewer_location")}
             Visit: {m.get("year_month")}  Rating: {m.get("rating")}/5
             Text:
-            {h.get("document", "")}
+            {body}
             """
         ).strip()
         if used + len(block) > max_chars:
@@ -85,7 +98,7 @@ def _answer_extractive(question: str, hits: list[dict], relax_note: str) -> str:
     lines.append("")
     for h in hits[:8]:
         m = h.get("metadata") or {}
-        snippet = (h.get("document") or "")[:400].replace("\n", " ")
+        snippet = _review_body(h.get("document") or "")[:400].replace("\n", " ")
         lines.append(
             f"- [{m.get('review_id')}] {m.get('branch')} | "
             f"{m.get('reviewer_location')} | {m.get('year_month')} | {m.get('rating')}/5 — {snippet}..."

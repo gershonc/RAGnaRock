@@ -27,6 +27,7 @@ def _cmd_ask(args: argparse.Namespace) -> int:
     print(f"  branch: {used.branch}")
     print(f"  reviewer_location: {used.reviewer_location}")
     print(f"  months: {used.months}")
+    print(f"  years: {used.years}")
     if used.relaxations:
         print("  relaxations:")
         for r in used.relaxations:
@@ -42,6 +43,7 @@ def _cmd_show_filters(args: argparse.Namespace) -> int:
     print(f"branch: {f.branch}")
     print(f"reviewer_location: {f.reviewer_location}")
     print(f"months: {f.months}")
+    print(f"years: {f.years}")
     return 0
 
 
