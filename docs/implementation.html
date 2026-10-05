@@ -53,11 +53,11 @@
   <div>
     <span class="badge">42,656 reviews</span>
     <span class="badge">Chroma + MiniLM-L6-v2</span>
-    <span class="badge">gpt-4o-mini (optional)</span>
-    <span class="badge">Python CLI</span>
-    <span class="badge">v2 · with diagrams</span>
+    <span class="badge">local LM Studio LLM</span>
+    <span class="badge">FastAPI web app + CLI</span>
+    <span class="badge">v3 · with diagrams</span>
   </div>
-  <p>Generated 2026-09-29 from working tree. Dataset file <code class="inline">dataset/DisneylandReviews.csv</code> is intentionally committed (31&nbsp;MB). Doc file: <code class="inline">docs/implementation.html</code> (self-contained, no external assets).</p>
+  <p>Generated 2026-10-05 from working tree. Dataset file <code class="inline">dataset/DisneylandReviews.csv</code> is intentionally committed (31&nbsp;MB). Doc file: <code class="inline">docs/implementation.html</code> (self-contained, no external assets). Covers the CLI pipeline, the MagicMirror web app, and local-LLM synthesis.</p>
 </header>
 
 <nav class="toc">
@@ -78,6 +78,8 @@
     <li><a href="#fixes">Fixes 1–5 (applied)</a></li>
     <li><a href="#git">Git / committing the data</a></li>
     <li><a href="#eval">Evaluation &amp; troubleshooting</a></li>
+    <li><a href="#webapp">MagicMirror web app</a></li>
+    <li><a href="#fixes6">Fixes 6–8: local LLM + answer formatting</a></li>
   </ol>
 </nav>
 
@@ -92,7 +94,7 @@
     <li>Is the staff in Paris friendly?</li>
     <li>How did ratings for Hong Kong trend in 2015–2017? (uses the <code class="inline">years</code> filter)</li>
   </ul>
-  <p>Without <code class="inline">OPENAI_API_KEY</code>, <code class="inline">ask</code> returns extractive snippets (no synthesis). With a key it returns a grounded summary with Review-ID citations.</p>
+  <p>Without <code class="inline">OPENAI_API_KEY</code>, <code class="inline">ask</code> returns extractive snippets (no synthesis). With a key it returns a grounded summary with Review-ID citations — against OpenAI cloud by default, or against a local LM Studio server when <code class="inline">OPENAI_BASE_URL</code> points at it (see §16–17).</p>
 </section>
 
 <!-- ================= 2 ================= -->
@@ -307,9 +309,11 @@
     <tr><td><code class="inline">rag/embeddings.py</code> (35 lines)</td><td>Chroma SentenceTransformer fn; <code class="inline">local_files_only=True</code> once a snapshot exists under <code class="inline">.hf_cache/</code> (offline asks).</td><td><code class="inline">chroma_sentence_transformer_ef(), model_cached_locally()</code></td></tr>
     <tr><td><code class="inline">rag/ingest.py</code> (100 lines)</td><td>Streaming CSV → Chroma, batched (256), resilient rows.</td><td><code class="inline">ingest_csv(csv_path, reset, batch_size)</code></td></tr>
     <tr><td><code class="inline">rag/retrieve.py</code> (90 lines)</td><td>Filtered vector search + ordered relaxation + result packing.</td><td><code class="inline">retrieve(question, n_results, filters), _relax_filters(), _pack_results()</code></td></tr>
-    <tr><td><code class="inline">rag/answer.py</code> (106 lines)</td><td>Deduped context formatting (12k budget), OpenAI or extractive path.</td><td><code class="inline">answer_question(), _format_context(), _review_body(), _answer_openai / _answer_extractive()</code></td></tr>
+    <tr><td><code class="inline">rag/answer.py</code> (~150 lines)</td><td>Output-contract prompting, deduped context (12k), OpenAI-compatible or extractive path, tok/s metrics.</td><td><code class="inline">answer_question(), _format_context(), _sanitize_answer(), _answer_openai / _answer_extractive()</code></td></tr>
+    <tr><td><code class="inline">rag/web.py</code> (~110 lines)</td><td>FastAPI server for the MagicMirror UI: static files + <code class="inline">/api/health, /api/stats, /api/filters, /api/ask</code>. Same <code class="inline">retrieve() + answer_question()</code> pipeline as the CLI.</td><td><code class="inline">app, ask(), stats(), preview_filters()</code></td></tr>
+    <tr><td><code class="inline">web/</code> (index.html, styles.css, app.js)</td><td>Single-page UI: search + examples, k slider, model picker, dark/light themes, filter pills, lead-paragraph answer, Key-points cards, References cards with match %, tok/s perf pill.</td><td><code class="inline">ask(), renderAnswer(), renderFilters()</code></td></tr>
   </table>
-  <p>Models: embedding <code class="inline">sentence-transformers/all-MiniLM-L6-v2</code> (384-dim, cosine HNSW); LLM <code class="inline">OPENAI_MODEL</code> default <code class="inline">gpt-4o-mini</code>, temperature 0.2. Retrieval default <code class="inline">k=20</code>; fallback shows top 8.</p>
+  <p>Models: embedding <code class="inline">sentence-transformers/all-MiniLM-L6-v2</code> (384-dim, cosine HNSW); LLM is <code class="inline">OPENAI_MODEL</code> against <code class="inline">OPENAI_BASE_URL</code> — default deployment is local <code class="inline">qwen/qwen3.5-9b</code> on LM Studio (<code class="inline">http://127.0.0.1:1235/v1</code>), temperature 0.2. Retrieval default <code class="inline">k=20</code> (CLI) / <code class="inline">k=10</code> (web); fallback shows top 8.</p>
 </section>
 
 <!-- ================= 7 ================= -->
@@ -474,7 +478,7 @@ HK Disneyland is a great compact park. ... no where near as busy as LA Disneylan
 <!-- ================= 10 ================= -->
 <section class="card" id="answer">
   <h2>10. Answer generation &amp; context budget</h2>
-  <p><code class="inline">answer_question(question, hits, filters)</code> has three exits: no hits → fixed message; key set → <code class="inline">_answer_openai</code>; no key → <code class="inline">_answer_extractive</code>. Context is capped at <strong>12,000 chars</strong> — whole review blocks are added until the next would overflow.</p>
+  <p><code class="inline">answer_question(question, hits, filters, model=None, metrics=None)</code> has three exits: no hits → fixed message; key set → <code class="inline">_answer_openai</code>; no key → <code class="inline">_answer_extractive</code>. Context is capped at <strong>12,000 chars</strong> — whole review blocks are added until the next would overflow. The LLM is held to a strict output contract: paragraph 1 is the direct answer (2–4 sentences), then numbered points each on its own paragraph with one verbatim quote + Review ID — and the <code class="inline">*</code> character is banned outright (bullets, bold and italics all use it). <code class="inline">_sanitize_answer()</code> converts any stray <code class="inline">*</code>/<code class="inline">-</code> bullets to numbered points as a safety net. When <code class="inline">metrics</code> is passed, generation time, <code class="inline">completion_tokens</code> and tokens/sec are recorded for the UI perf pill.</p>
   <figure class="diagram">
     <svg viewBox="0 0 980 250" role="img" aria-label="Context budget before and after dedup fix">
       <defs></defs>
@@ -497,9 +501,19 @@ HK Disneyland is a great compact park. ... no where near as busy as LA Disneylan
 <pre>system: You are an analyst for Disneyland guest reviews.
   Answer ONLY using the provided review excerpts and their metadata.
   If evidence is mixed, say so. If evidence is thin, say you are unsure.
-  Cite Review IDs in parentheses when you paraphrase specific reviews.
-  Keep the answer concise and practical for a customer-experience team.
-  (temperature 0.2, model = OPENAI_MODEL or gpt-4o-mini)
+  Format rules (follow exactly):
+  1. Paragraph 1 is the direct answer to the question in 2-4 sentences.
+  2. Then a structured breakdown as numbered points (1. 2. 3.), each
+     starting with a short lead phrase. Put each point on its own
+     paragraph, starting exactly with "1. ", "2. ", and so on.
+     Support each point with one short verbatim quote plus its Review
+     ID in parentheses, e.g. ("quote..." 123456789).
+  3. NEVER use the * character anywhere in your answer. No bullets,
+     no bold markers, no italics. Numbers and plain paragraphs only.
+  (temperature 0.2, max_tokens = LLM_MAX_TOKENS or 1500,
+   model = per-request override or OPENAI_MODEL;
+   local runtimes also get extra_body {"reasoning_effort": "none"}
+   unless LLM_REASONING_EFFORT says otherwise — see §17)
 
 user:   Question:
   &lt;question&gt;
@@ -565,13 +579,14 @@ so it must hedge ("limited evidence…").</pre>
     <tr><td><code class="inline">ask "…" [-k 20]</code></td><td>Print filters → relaxations → count → answer.</td><td><code class="inline">--- Inferred filters --- branch: … / Retrieved 20 chunks --- …</code></td></tr>
     <tr><td><code class="inline">show-filters "…"</code></td><td>Print <code class="inline">branch / reviewer_location / months / years</code> only.</td><td><code class="inline">branch: Disneyland_Paris / months: [6] / …</code></td></tr>
   </table>
-  <p>Secrets: gitignored <code class="inline">.env</code> with <code class="inline">OPENAI_API_KEY</code> (optional <code class="inline">OPENAI_MODEL</code>), loaded by <code class="inline">rag/config.py</code> via <code class="inline">python-dotenv</code>; shell export also works. Never commit keys; production should use a secret manager (AWS/GCP/Vault) injected as env vars, CI via platform secrets.</p>
+  <p>Secrets: gitignored <code class="inline">.env</code>, loaded by <code class="inline">rag/config.py</code> via <code class="inline">python-dotenv</code>; shell export also works. Keys: <code class="inline">OPENAI_API_KEY</code> (required for any LLM synthesis; LM Studio ignores the value), <code class="inline">OPENAI_BASE_URL</code> (set to <code class="inline">http://127.0.0.1:1235/v1</code> for local, unset for OpenAI cloud), <code class="inline">OPENAI_MODEL</code> (default <code class="inline">qwen/qwen3.5-9b</code>), <code class="inline">LLM_MAX_TOKENS</code> (default 1500), <code class="inline">LLM_REASONING_EFFORT</code> (<code class="inline">none</code> locally by default, <code class="inline">auto</code> = omit). Never commit keys; production should use a secret manager (AWS/GCP/Vault) injected as env vars, CI via platform secrets.</p>
   <h4>First-run checklist</h4>
 <pre>python3 -m venv .venv &amp;&amp; source .venv/bin/activate
-pip install -r requirements.txt        # dotenv, chromadb, sentence-transformers, pandas, tqdm, openai
+pip install -r requirements.txt        # dotenv, chromadb, sentence-transformers, pandas, tqdm, openai, fastapi, uvicorn
 python -m rag.cli ingest --reset       # a few minutes; downloads MiniLM once
 python -m rag.cli show-filters "Is Disneyland California crowded in June?"
-python -m rag.cli ask "What do visitors from Australia say about Hong Kong Disneyland?" -k 20</pre>
+python -m rag.cli ask "What do visitors from Australia say about Hong Kong Disneyland?" -k 20
+python -m uvicorn rag.web:app --port 8000   # web UI at http://127.0.0.1:8000</pre>
 </section>
 
 <!-- ================= 13 ================= -->
@@ -622,8 +637,45 @@ python -m rag.cli ask "What do visitors from Australia say about Hong Kong Disne
   </ul>
 </section>
 
+<!-- ================= 16 ================= -->
+<section class="card" id="webapp">
+  <h2>16. MagicMirror web app</h2>
+  <p><code class="inline">python -m uvicorn rag.web:app --port 8000</code> serves a single-page UI at <code class="inline">http://127.0.0.1:8000</code>. The server is a thin layer: every question runs the exact same <code class="inline">retrieve() → answer_question()</code> pipeline as the CLI, plus per-request timing for the tok/s pill.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 980 168" role="img" aria-label="Web request flow">
+      <defs><marker id="a8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9aa4b5"/></marker></defs>
+      <rect x="8" y="30" width="150" height="96" rx="8" fill="#12202e" stroke="#2a3140"/><text x="83" y="62" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">Browser</text><text x="83" y="80" text-anchor="middle" fill="#9aa4b5" font-size="11">search + k +</text><text x="83" y="96" text-anchor="middle" fill="#9aa4b5" font-size="11">model picker</text><text x="83" y="112" text-anchor="middle" fill="#9aa4b5" font-size="11">dark/light</text>
+      <rect x="184" y="30" width="170" height="96" rx="8" fill="#12202e" stroke="#7cc4ff"/><text x="269" y="62" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">POST /api/ask</text><text x="269" y="80" text-anchor="middle" fill="#9aa4b5" font-size="11">{question, k,</text><text x="269" y="96" text-anchor="middle" fill="#9aa4b5" font-size="11">model?} → web.py</text>
+      <rect x="380" y="30" width="220" height="96" rx="8" fill="#12202e" stroke="#2a3140"/><text x="490" y="62" text-anchor="middle" fill="#e8ecf3" font-size="12" font-weight="bold">CLI pipeline, reused</text><text x="490" y="80" text-anchor="middle" fill="#9aa4b5" font-size="11">retrieve() → answer_</text><text x="490" y="96" text-anchor="middle" fill="#9aa4b5" font-size="11">question() + metrics</text><text x="490" y="112" text-anchor="middle" fill="#9aa4b5" font-size="11">snippets ≤1000 ch</text>
+      <rect x="626" y="30" width="150" height="96" rx="8" fill="#0c0f14" stroke="#7cc4ff"/><text x="701" y="62" text-anchor="middle" fill="#7cc4ff" font-size="12" font-weight="bold">LM Studio</text><text x="701" y="80" text-anchor="middle" fill="#9aa4b5" font-size="11">:1235 /v1</text><text x="701" y="96" text-anchor="middle" fill="#9aa4b5" font-size="11">reasoning off</text><text x="701" y="112" text-anchor="middle" fill="#9aa4b5" font-size="11">usage → tok/s</text>
+      <rect x="802" y="30" width="170" height="96" rx="8" fill="#0c0f14" stroke="#7dffa8"/><text x="887" y="62" text-anchor="middle" fill="#7dffa8" font-size="12" font-weight="bold">Rendered UI</text><text x="887" y="80" text-anchor="middle" fill="#9aa4b5" font-size="11">lead → Key points →</text><text x="887" y="96" text-anchor="middle" fill="#9aa4b5" font-size="11">References + % +</text><text x="887" y="112" text-anchor="middle" fill="#9aa4b5" font-size="11">tok/s pill</text>
+      <line x1="158" y1="78" x2="182" y2="78" stroke="#9aa4b5" marker-end="url(#a8)"/><line x1="354" y1="78" x2="378" y2="78" stroke="#9aa4b5" marker-end="url(#a8)"/><line x1="600" y1="62" x2="624" y2="62" stroke="#9aa4b5" marker-end="url(#a8)"/><line x1="776" y1="94" x2="800" y2="94" stroke="#9aa4b5" marker-end="url(#a8)"/>
+      <text x="490" y="152" text-anchor="middle" fill="#9aa4b5" font-size="11">GET /api/stats (index count, model list) and GET /api/filters?q= (debug inference) ride alongside; / serves web/index.html, /static serves CSS + JS</text>
+    </svg>
+    <figcaption><b>Figure 10 — Web request flow.</b> The browser never talks to Chroma or the LLM directly; <code class="inline">rag/web.py</code> reuses the CLI pipeline and returns <code class="inline">{answer, llm_failed, metrics, filters, hits, count}</code> as JSON.</figcaption>
+  </figure>
+  <h4>UI contract (what each piece shows)</h4>
+  <table><tr><th>Piece</th><th>Source</th><th>Notes</th></tr>
+  <tr><td>Answer card (lead paragraph)</td><td>Non-numbered blocks of the LLM answer</td><td>First paragraph styled larger; never bold; no <code class="inline">*</code> anywhere</td></tr>
+  <tr><td>Key points section</td><td>Numbered <code class="inline">N.</code> blocks, numbers stripped</td><td>Gold-accent cards; frontend repairs missing periods and mid-paragraph <code class="inline">2.</code> run-ons</td></tr>
+  <tr><td>References cards</td><td><code class="inline">hits</code> (snippet ≤1000 ch, clamped to 7 lines + expander)</td><td>Branch badge, stars, location/date, <code class="inline">◎ NN.N% match</code> from <code class="inline">1 − distance</code>, Review ID footer</td></tr>
+  <tr><td>Perf pill</td><td><code class="inline">metrics</code></td><td><code class="inline">⚡ tok/s · N tokens in Ss · model</code>; hidden on fallback</td></tr>
+  <tr><td>Filter pills</td><td><code class="inline">filters</code> (+ relaxations)</td><td>Park / From / Months / Years + amber ↩ notes</td></tr></table>
+</section>
+
+<!-- ================= 17 ================= -->
+<section class="card" id="fixes6">
+  <h2>17. Fixes 6–8: local LLM + answer formatting (applied 2026-10-05)</h2>
+  <div class="fix"><h4>Fix 6 — Reasoning models returned empty answers locally <span class="pill-ok">✓ fixed</span></h4>
+  <p>Symptom: LM Studio reasoning models (Qwen, Muse Glimmer) think for thousands of tokens before answering, so with a small <code class="inline">max_tokens</code> the response contained only <code class="inline">reasoning_content</code> and empty <code class="inline">content</code>. Fix: local runtimes (127.0.0.1/localhost, ports 1234/1235/11434/8000) default to <code class="inline">extra_body={"reasoning_effort": "none"}</code>; override with <code class="inline">LLM_REASONING_EFFORT</code>. Residual safety: if <code class="inline">content</code> is still empty, the tail of <code class="inline">reasoning_content</code> is used. Verified: <code class="inline">reasoning_effort=none</code> → direct answer, 0 reasoning tokens; without it → budget exhausted mid-thought. File: <code class="inline">rag/answer.py: _answer_openai</code>.</p></div>
+  <div class="fix"><h4>Fix 7 — Asterisk bullets / bold in answers <span class="pill-ok">✓ fixed</span></h4>
+  <p>Models love <code class="inline">*</code> bullets, which the design forbids. Three layers: (1) system prompt bans the <code class="inline">*</code> character entirely and mandates the lead-paragraph + one-point-per-paragraph contract; (2) <code class="inline">_sanitize_answer()</code> rewrites any surviving <code class="inline">*</code>/<code class="inline">-</code> bullets as numbered points; (3) the UI renders points as numberless gold-accent cards anyway. Verified: 0 <code class="inline">*</code> in output. Files: <code class="inline">rag/answer.py</code>, <code class="inline">web/app.js</code>.</p></div>
+  <div class="fix"><h4>Fix 8 — Numbered points ran together in one blob <span class="pill-ok">✓ fixed</span></h4>
+  <p>Symptom: <code class="inline">…June visits. 2. Guests report… 3. …</code> arrived as a single paragraph (and sometimes <code class="inline">1 Text</code> without the period), so the point-splitter found nothing. Fix: normalize first — repair a leading <code class="inline">N </code> to <code class="inline">N. </code>, break mid-paragraph <code class="inline">N.</code> (capital-letter lookahead avoids decimals) onto its own line — then split on both blank lines <em>and</em> single newlines preceding <code class="inline">N.</code>. Points render in the Key-points section. Verified with the exact reported shape: 1 lead + 3 points. File: <code class="inline">web/app.js: renderAnswer()</code>.</p></div>
+</section>
+
 <footer>
-  RAGnaRock · <code class="inline">docs/implementation.html</code> · 9 figures (architecture, ingest, ask flow, sequence chart, storage, inference, seasons, relaxation, context budget) · covers <code class="inline">rag/cli.py, config.py, embeddings.py, filters.py, ingest.py, metadata.py, retrieve.py, answer.py</code> · dataset 42,656 rows.
+  RAGnaRock + MagicMirror · <code class="inline">docs/implementation.html</code> · 10 figures (architecture, ingest, ask flow, sequence chart, storage, inference, seasons, relaxation, context budget, web flow) · covers <code class="inline">rag/cli.py, config.py, embeddings.py, filters.py, ingest.py, metadata.py, retrieve.py, answer.py, web.py</code> + <code class="inline">web/</code> · dataset 42,656 rows.
 </footer>
 
 </div>
