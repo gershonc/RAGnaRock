@@ -164,6 +164,22 @@ Debug metadata inference without retrieval:
 python -m rag.cli show-filters "Is Disneyland California crowded in June?"
 ```
 
+## Web app
+
+```bash
+.venv/bin/python -m uvicorn rag.web:app --port 8000
+```
+
+Open <http://127.0.0.1:8000> — search box, example questions, model picker
+(local LM Studio models), inferred-filter pills, grounded answer with Review ID
+citations, and evidence cards.
+
+The web app uses the same `retrieve()` + `answer_question()` pipeline as the
+CLI. LLM answers come from whatever `OPENAI_BASE_URL` / `OPENAI_MODEL` point
+to — set `OPENAI_BASE_URL=http://127.0.0.1:1235/v1` in `.env` to use your
+local LM Studio model instead of OpenAI cloud (reasoning is auto-disabled
+locally via `LLM_REASONING_EFFORT=none`).
+
 ## CLI reference
 
 | Command | Description |

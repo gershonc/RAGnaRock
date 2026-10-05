@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MagicMirror — what Disney guests really say</title>
+<link rel="stylesheet" href="/static/styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪞</text></svg>" />
+</head>
+<body>
+<header class="hero">
+  <div class="hero-inner">
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="46" height="46">
+        <defs>
+          <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#bfe3ff"/>
+            <stop offset=".55" stop-color="#5f8dff"/>
+            <stop offset="1" stop-color="#2b3a7a"/>
+          </linearGradient>
+          <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#ffe9a8"/>
+            <stop offset="1" stop-color="#e8a93d"/>
+          </linearGradient>
+        </defs>
+        <ellipse cx="32" cy="26" rx="17" ry="20" fill="none" stroke="url(#gold)" stroke-width="4"/>
+        <ellipse cx="32" cy="26" rx="13" ry="16" fill="url(#glass)"/>
+        <path d="M25 20 L28 27 L35 27 L29.5 31 L31.5 38 L25 33.5 L18.5 38 L20.5 31 L15 27 L22 27 Z" fill="#fff" opacity=".9"/>
+        <rect x="29.5" y="45" width="5" height="9" rx="2.5" fill="url(#gold)"/>
+        <circle cx="32" cy="57" r="3.4" fill="url(#gold)"/>
+        <path d="M50 8 l1.2 2.8 2.8 1.2 -2.8 1.2 -1.2 2.8 -1.2 -2.8 -2.8 -1.2 2.8 -1.2 Z" fill="#ffe9a8"/>
+        <path d="M12 40 l.9 2 2 .9 -2 .9 -.9 2 -.9 -2 -2 -.9 2 -.9 Z" fill="#7cc4ff"/>
+      </svg>
+    </div>
+    <div>
+      <h1>MagicMirror</h1>
+      <p class="tag">Ask anything about Disneyland reviews <span class="nowrap">(grounded in <span id="stat-count">42,656</span> real guest reviews)</span></p>
+    </div>
+    <div class="top-right">
+      <div class="parks">
+        <span class="park">California</span>
+        <span class="park">Paris</span>
+        <span class="park">Hong Kong</span>
+      </div>
+      <button id="theme" class="theme-btn" title="Toggle light / dark mode">☀️</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="ask-card">
+    <div class="ask-row">
+      <input id="q" type="text" placeholder="e.g. What do visitors from Australia say about Hong Kong Disneyland?" autocomplete="off" />
+      <button id="go"><span class="go-label">Ask</span></button>
+    </div>
+    <div class="chips">
+      <button class="chip">Is spring a good time to visit?</button>
+      <button class="chip">Is Disneyland California crowded in June?</button>
+      <button class="chip">Is the staff in Paris friendly?</button>
+      <button class="chip">What do visitors from Australia say about Hong Kong?</button>
+    </div>
+    <div class="controls">
+      <label>Results <input id="k" type="range" min="3" max="30" value="10" /> <b id="kval">10</b></label>
+      <label>Model
+        <select id="model">
+          <option value="">auto (server default)</option>
+          <option value="qwen/qwen3.5-9b">qwen3.5-9b · fast</option>
+          <option value="qwen/qwen3.8-27b">qwen3.8-27b · balanced</option>
+          <option value="qwen/qwen3.6-35b-a3b">qwen3.6-35b · best</option>
+          <option value="meta/muse-glimmer">muse-glimmer</option>
+        </select>
+      </label>
+      <span id="llm-badge" class="badge">checking LLM…</span>
+    </div>
+  </section>
+
+  <section id="filters" class="filters hidden"></section>
+
+  <section id="answer" class="answer hidden">
+    <div class="answer-head">
+      <h2>Answer</h2>
+      <span id="perf" class="perf"></span>
+    </div>
+    <div id="answer-body"></div>
+  </section>
+
+  <section id="points" class="points hidden">
+    <h2>Key points</h2>
+    <div id="points-body"></div>
+  </section>
+
+  <section id="results" class="results hidden">
+    <h2>References <span id="rcount"></span></h2>
+    <div id="cards" class="cards"></div>
+  </section>
+
+  <div id="loading" class="loading hidden"><div class="spin"></div><p>Searching reviews &amp; writing answer…</p></div>
+  <div id="err" class="err hidden"></div>
+</main>
+
+<footer>Mirror, mirror on the wall — powered by Chroma + your local LM Studio model · citations are Review IDs</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>
