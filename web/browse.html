@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MagicMirror — browse the index</title>
+<link rel="stylesheet" href="/static/styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪞</text></svg>" />
+</head>
+<body>
+<header class="hero">
+  <div class="hero-inner">
+    <div>
+      <h1>Browse the index</h1>
+      <p class="tag">Direct view into <span id="bstat-count">…</span> stored reviews</p>
+    </div>
+    <div class="top-right">
+      <nav class="navlinks">
+        <a href="/">Ask</a>
+        <a href="/browse" class="active">Browse</a>
+      </nav>
+      <button id="theme" class="theme-btn" title="Toggle light / dark mode">☀️</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="ask-card">
+    <div class="browse-controls">
+      <label>Collection <select id="col"></select></label>
+      <label>Park
+        <select id="branch">
+          <option value="">all parks</option>
+          <option>Disneyland_California</option>
+          <option>Disneyland_Paris</option>
+          <option>Disneyland_HongKong</option>
+        </select>
+      </label>
+      <label>Rating
+        <select id="rating">
+          <option value="">any</option>
+          <option>5</option><option>4</option><option>3</option><option>2</option><option>1</option>
+        </select>
+      </label>
+      <label class="grow">Contains text <input id="q" type="text" placeholder="e.g. crowded" /></label>
+      <label>Per page
+        <select id="limit">
+          <option>10</option><option selected>20</option><option>50</option>
+        </select>
+      </label>
+      <button id="go"><span class="go-label">Browse</span></button>
+    </div>
+  </section>
+
+  <section id="stats" class="stats hidden">
+    <div class="stat-grid" id="stat-cards"></div>
+    <div class="distributions">
+      <div class="dist"><h3>By park</h3><div id="d-branch"></div></div>
+      <div class="dist"><h3>By rating</h3><div id="d-rating"></div></div>
+      <div class="dist"><h3>Top locations</h3><div id="d-loc"></div></div>
+    </div>
+  </section>
+
+  <section id="results" class="results hidden">
+    <h2>Records <span id="rcount"></span></h2>
+    <div class="table-wrap"><table class="btable">
+      <thead><tr>
+        <th></th><th>ID</th><th>Park</th><th>★</th><th>From</th><th>Visit</th><th>Review</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+    <div class="pager">
+      <button id="prev">← Prev</button>
+      <span id="pageinfo"></span>
+      <button id="next">Next →</button>
+    </div>
+  </section>
+
+  <div id="loading" class="loading hidden"><div class="spin"></div><p>Loading…</p></div>
+  <div id="err" class="err hidden"></div>
+</main>
+
+<footer>Direct read of your local Chroma index · filters map to where / where_document clauses</footer>
+<script src="/static/browse.js"></script>
+</body>
+</html>

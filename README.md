@@ -1,8 +1,13 @@
-# RAGnaRock
+# MagicMirror ✨🪞
 
-RAGnaRock: Build RAG systems that actually survive production.
+**Ask anything about Disneyland reviews (grounded in 42,656 real guest reviews).**
 
-This project is a **Retrieval-Augmented Generation (RAG)** system over the **Disneyland Reviews** dataset. The customer experience team can ask open-ended natural language questions that use both **review text** and **structured metadata** (park, visitor country, visit date, rating).
+RAGnaRock is a **Retrieval-Augmented Generation (RAG)** system over the **Disneyland Reviews** dataset. The customer experience team can ask open-ended natural language questions that use both **review text** and **structured metadata** (park, visitor country, visit date, rating) — through a web app, and with a local LLM so no API key is needed.
+
+```bash
+.venv/bin/python -m uvicorn rag.web:app --port 8000
+# → http://127.0.0.1:8000 (Ask) · http://127.0.0.1:8000/browse (Browse)
+```
 
 ## Example questions
 
@@ -32,6 +37,7 @@ Place `DisneylandReviews.csv` under `dataset/` (not committed by default). Colum
 flowchart TB
     subgraph User["User / CX team"]
         Q["Natural language question"]
+        WEB["MagicMirror web UI\nAsk + Browse pages"]
         CLI["python -m rag.cli"]
     end
 
@@ -45,15 +51,18 @@ flowchart TB
     end
 
     subgraph Online["Query path (ask)"]
+        API["rag/web.py\nFastAPI: /api/ask"]
         FILTERS["filters.py\nNL → branch, country, season/month"]
         RET["retrieve.py\nmetadata filter + semantic search"]
         RELAX["Filter relaxation\nif zero hits"]
-        ANS["answer.py"]
-        OAI["OpenAI API\ngpt-4o-mini"]
+        ANS["answer.py\nlead paragraph + Key points"]
+        LLM["Local LM Studio\nreasoning off · tok/s metric"]
+        OAI["OpenAI cloud\n(unset OPENAI_BASE_URL)"]
         FALL["Extractive fallback\nsnippets + metadata"]
+        REF["References cards\nmatch % · Review IDs"]
     end
 
-    CONFIG["config.py + .env\nOPENAI_API_KEY"]
+    CONFIG["config.py + .env\nOPENAI_BASE_URL, OPENAI_MODEL"]
 
     CSV --> INGEST
     INGEST --> META
@@ -61,17 +70,23 @@ flowchart TB
     EMB --> HF
     EMB --> CHROMA
 
+    Q --> WEB
     Q --> CLI
+    WEB --> API
     CLI --> FILTERS
+    API --> FILTERS
     FILTERS --> RET
     RET --> CHROMA
     RET --> RELAX
     RELAX --> ANS
     CONFIG --> ANS
-    ANS -->|OPENAI_API_KEY set| OAI
+    ANS -->|local base URL| LLM
+    ANS -->|no base URL| OAI
     ANS -->|no key| FALL
-    OAI --> CLI
+    LLM --> REF
+    OAI --> REF
     FALL --> CLI
+    REF --> WEB
 ```
 
 ### Ingest pipeline
@@ -119,6 +134,31 @@ sequenceDiagram
     CLI-->>User: answer
 ```
 
+### Web request path
+
+The browser never touches Chroma or the LLM directly — `rag/web.py` reuses the same pipeline and returns JSON:
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant UI as MagicMirror (browser)
+    participant API as rag/web.py
+    participant R as retrieve.py
+    participant C as Chroma
+    participant LLM as LM Studio
+
+    User->>UI: question + k + model
+    UI->>API: POST /api/ask
+    API->>R: retrieve(question, k)
+    R->>C: query + where metadata filter
+    C-->>R: top-k hits + distances
+    R-->>API: hits + filters used
+    API->>LLM: question + context (reasoning off)
+    LLM-->>API: answer + usage (tok/s)
+    API-->>UI: {answer, metrics, filters, hits}
+    UI-->>User: lead → Key points → References + ⚡ tok/s
+```
+
 ### Text + metadata together
 
 | Layer | Role |
@@ -164,21 +204,29 @@ Debug metadata inference without retrieval:
 python -m rag.cli show-filters "Is Disneyland California crowded in June?"
 ```
 
-## Web app
+### 5. Launch the web app (MagicMirror)
 
 ```bash
 .venv/bin/python -m uvicorn rag.web:app --port 8000
 ```
 
-Open <http://127.0.0.1:8000> — search box, example questions, model picker
-(local LM Studio models), inferred-filter pills, grounded answer with Review ID
-citations, and evidence cards.
+- **Ask** (`/`) — search box + examples, k slider, model picker, dark/light mode, filter pills, lead-paragraph answer, Key-points section, References cards with `◎ %` match scores, and a `⚡ tok/s` perf pill.
+- **Browse** (`/browse`) — collection stats (totals, park/rating/location bars), park + rating + text filters, paged record table, expandable full text, and per-record **embedding inspector** (dim, L2 norm, magnitude bars, raw values).
 
-The web app uses the same `retrieve()` + `answer_question()` pipeline as the
-CLI. LLM answers come from whatever `OPENAI_BASE_URL` / `OPENAI_MODEL` point
-to — set `OPENAI_BASE_URL=http://127.0.0.1:1235/v1` in `.env` to use your
-local LM Studio model instead of OpenAI cloud (reasoning is auto-disabled
-locally via `LLM_REASONING_EFFORT=none`).
+## API reference
+
+| Route | Description |
+|-------|-------------|
+| `GET /` | Ask page |
+| `GET /browse` | Browse page |
+| `GET /api/health` | Liveness |
+| `GET /api/stats` | Index count, branches, local models, LLM status |
+| `GET /api/filters?q=…` | Debug NL → metadata mapping |
+| `POST /api/ask` | `{question, k, model?}` → `{answer, llm_failed, metrics, filters, hits, count}` |
+| `GET /api/collections` | Collections + counts |
+| `GET /api/chroma-stats?collection=…` | Branch/rating/year/location distributions (5-min cache) |
+| `GET /api/browse?collection=&limit=&offset=&q=&branch=&rating=` | Paged records (`q` → `where_document $contains`) |
+| `GET /api/record?collection=&id=&vectors=` | Full document + metadata, optionally the 384-dim embedding |
 
 ## CLI reference
 
@@ -194,30 +242,21 @@ Options:
 - `ingest --reset` — delete and rebuild the collection
 - `ask -k N` — number of chunks to retrieve (default 20)
 
-## OpenAI API key (optional)
+## LLM setup: local LM Studio (default) or OpenAI cloud
 
-Without a key, `ask` returns **top retrieved snippets** (extractive fallback). With a key, answers are **grounded summaries** with Review ID citations.
-
-### Recommended: `.env` in the repo root
-
-Create `.env` (already gitignored):
+The app speaks the OpenAI API shape, so one `.env` covers both. Local is the default — no key needed (any placeholder value works; LM Studio ignores it):
 
 ```bash
-OPENAI_API_KEY=sk-...
-# optional:
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_API_KEY=lm-studio
+OPENAI_BASE_URL=http://127.0.0.1:1235/v1
+OPENAI_MODEL=qwen/qwen3.5-9b
+LLM_MAX_TOKENS=1500
+# LLM_REASONING_EFFORT=none   # default for local runtimes; "auto" omits it
 ```
 
-`rag/config.py` loads this via `python-dotenv` on startup.
+Unset `OPENAI_BASE_URL` (and set a real key + `OPENAI_MODEL=gpt-4o-mini`) to use OpenAI cloud instead.
 
-### Alternative: shell export
-
-```bash
-export OPENAI_API_KEY="sk-..."
-python -m rag.cli ask "Is the staff in Paris friendly?"
-```
-
-`export` sets a variable for the **current terminal session** and passes it to child processes (e.g. Python). It does not persist in new terminals unless you add it to `~/.zshrc`.
+Without any key, `ask` returns **top retrieved snippets** (extractive fallback). Local reasoning models think for thousands of tokens before answering, so the app sends `reasoning_effort: none` to local runtimes — otherwise the token budget burns in deliberation and the answer comes back empty.
 
 ### Handling secrets safely
 
@@ -236,18 +275,33 @@ RAGnaRock/
 ├── dataset/DisneylandReviews.csv   # your data (not in git by default)
 ├── rag/
 │   ├── cli.py          # ingest / ask / show-filters
+│   ├── web.py          # FastAPI: pages + /api/* (same pipeline as CLI)
 │   ├── config.py       # paths, HF cache, .env loading
 │   ├── embeddings.py   # SentenceTransformer + offline cache detection
 │   ├── filters.py      # NL → metadata (branch, location, season/month)
 │   ├── ingest.py       # CSV → Chroma
 │   ├── metadata.py     # year/month/season parsing
 │   ├── retrieve.py     # filtered vector search + relaxation
-│   └── answer.py       # OpenAI or extractive fallback
+│   └── answer.py       # local/cloud LLM or extractive fallback (+tok/s)
+├── web/
+│   ├── index.html      # Ask page (MagicMirror)
+│   ├── browse.html     # Browse page (stats, table, embeddings)
+│   ├── app.js          # ask + answer rendering (lead/Key points/References)
+│   ├── browse.js       # stats bars, filters, paging, vector inspector
+│   └── styles.css      # dark/light themes
 ├── .chroma/            # vector index (gitignored)
 ├── .hf_cache/          # embedding model cache (gitignored)
-├── .env                # secrets (gitignored)
+├── .env                # secrets + LLM endpoint (gitignored)
 └── requirements.txt
 ```
+
+## Answer format
+
+Every LLM answer follows the same contract (enforced by prompt + sanitizer + UI):
+
+1. **Lead paragraph** — the direct answer in 2–4 sentences, no bold, no asterisks.
+2. **Key points** — one card per supporting point, each with a verbatim quote + Review ID.
+3. **References** — the retrieved reviews as cards/table rows with `◎ %` match scores and Review IDs.
 
 ## Evaluating quality
 
@@ -277,6 +331,14 @@ Use several layers so you catch retrieval and generation failures:
 **Duplicate `Review_ID` in CSV**
 
 - Ingest uses stable Chroma ids `{review_id}-{row_index}` so duplicates do not break indexing.
+
+**Ports at a glance**
+
+- `8000` MagicMirror web app · `8001` Chroma server (if you run `chroma run`) · `1235` LM Studio. If a page won't load, check the right port is serving (`curl …/api/health`) and use `http://`, not `https://`.
+
+**Empty answers from a local model**
+
+- Reasoning models burn the token budget thinking. The app already sends `reasoning_effort: none` to local runtimes; if you changed `LLM_REASONING_EFFORT`, raise `LLM_MAX_TOKENS` or switch back to `none`.
 
 ## License
 
